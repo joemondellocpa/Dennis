@@ -215,7 +215,7 @@ else
   read -r -p "  Install Ollama and pull ${RECOMMENDED_MODEL}? [Y/n]: " ans_ollama
   ans_ollama="${ans_ollama:-Y}"
 
-  if [[ "${ans_ollama,,}" != "n" ]]; then
+  if [[ "$(echo "$ans_ollama" | tr '[:upper:]' '[:lower:]')" != "n" ]]; then
     # ── Install Ollama ───────────────────────────────────────────────────────
     if ! command -v ollama &>/dev/null; then
       if [[ "$PLATFORM" == "macos" ]]; then
