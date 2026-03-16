@@ -4,6 +4,7 @@ Dennis Agent – entry point.
 Starts:
 1. The Telegram bot (polling)
 2. The autonomous background goal scheduler
+3. The webhook server (if WEBHOOK_PORT > 0)
 """
 import asyncio
 import sys
@@ -15,9 +16,11 @@ from telegram import Bot
 import config
 from agent import Agent, Memory
 from agent.scheduler import GoalScheduler
+from agent.notifier import SmartNotifier
+from agent.webhooks import start_webhook_server
 from bot.telegram import build_app
 
-# ── Logging setup ──────────────────────────────────────────────────────────
+# ── Logging ────────────────────────────────────────────────────────────────
 logger.remove()
 logger.add(sys.stderr, level="INFO", colorize=True)
 logger.add(
@@ -30,15 +33,15 @@ logger.add(
 
 async def main():
     logger.info(f"Starting {config.AGENT_NAME}...")
+    if config.LIGHTWEIGHT_MODE:
+        logger.info("Running in LIGHTWEIGHT_MODE (Raspberry Pi / low-RAM device)")
 
-    # Initialize memory
     memory = Memory()
     logger.info("Memory initialized")
 
-    # Bot for proactive outbound notifications
     bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 
-    async def notify_all_users(message: str):
+    async def _raw_notify(message: str):
         for user_id in config.TELEGRAM_ALLOWED_USERS:
             try:
                 from telegram import constants
@@ -50,19 +53,19 @@ async def main():
             except Exception as e:
                 logger.warning(f"Failed to notify user {user_id}: {e}")
 
-    # Initialize agent
-    agent = Agent(memory=memory, send_message_fn=notify_all_users)
+    # SmartNotifier enforces quiet hours and rate limiting
+    notifier = SmartNotifier(memory=memory, raw_notify=_raw_notify)
 
-    # Background scheduler (pause/resume available via /pause and /resume)
-    scheduler = GoalScheduler(agent=agent, notify_fn=notify_all_users)
+    agent = Agent(memory=memory, send_message_fn=notifier.send)
+    scheduler = GoalScheduler(agent=agent, notify_fn=notifier.send)
     scheduler.start()
 
-    # Build Telegram app – pass scheduler so /pause, /resume, /status work
-    app = build_app(agent, scheduler=scheduler)
+    # Optional webhook server (background thread)
+    start_webhook_server(memory=memory, notifier=notifier)
 
+    app = build_app(agent, scheduler=scheduler)
     logger.info("Dennis is running. Send a message on Telegram to get started.")
 
-    # Run bot (blocking)
     await app.run_polling(
         drop_pending_updates=True,
         allowed_updates=["message", "callback_query"],

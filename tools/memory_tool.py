@@ -1,6 +1,4 @@
 """Memory management tools exposed to the LLM."""
-# These are thin wrappers; the Memory instance is injected at runtime.
-# The agent core passes `memory` when calling these.
 
 async def remember_fact(memory, category: str, key: str, value: str) -> dict:
     memory.set_fact(category, key, value)
@@ -23,9 +21,15 @@ async def save_knowledge(memory, content: str, source: str, tags: list[str] = No
     return {"success": True, "id": doc_id}
 
 
-async def create_goal(memory, title: str, description: str, priority: int = 5) -> dict:
-    goal_id = memory.create_goal(title, description, priority)
+async def create_goal(memory, title: str, description: str, priority: int = 5,
+                      schedule: str = None) -> dict:
+    goal_id = memory.create_goal(title, description, priority, schedule=schedule)
     return {"success": True, "goal_id": goal_id}
+
+
+async def create_goal_task(memory, goal_id: str, description: str) -> dict:
+    task_id = memory.add_goal_task(goal_id, description)
+    return {"success": True, "task_id": task_id}
 
 
 async def list_goals(memory) -> dict:
@@ -43,16 +47,23 @@ async def complete_goal(memory, goal_id: str) -> dict:
     return {"success": True}
 
 
-async def create_goal_task(memory, goal_id: str, description: str) -> dict:
-    """Add a concrete task to an existing goal's task queue."""
-    task_id = memory.add_goal_task(goal_id, description)
-    return {"success": True, "task_id": task_id}
-
-
 async def update_behavior(memory, key: str, value: str) -> dict:
-    """
-    Persist a behavioral preference or override.
-    These are loaded into the system prompt on every conversation turn.
-    """
     memory.set_behavior_config(key, value)
     return {"success": True, "message": f"Behavior updated: {key} = {value}"}
+
+
+async def save_draft(memory, draft_type: str, title: str, content: str,
+                     metadata: dict = None) -> dict:
+    """
+    Save a draft email or LinkedIn post for user review.
+    Use this instead of send_email/linkedin_post when working autonomously.
+
+    draft_type: 'email' or 'linkedin_post'
+    metadata for email: {"to": "...", "subject": "..."}
+    """
+    draft_id = memory.save_draft(draft_type, title, content, metadata or {})
+    return {
+        "success": True,
+        "draft_id": draft_id,
+        "message": f"Draft saved. User will be notified to review it via /drafts.",
+    }

@@ -363,12 +363,46 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_draft",
+            "description": (
+                "Save a draft email or LinkedIn post for user review instead of sending immediately. "
+                "Use this in autonomous mode whenever you want to send an email or post to LinkedIn. "
+                "The user will be notified and can approve, edit, or reject the draft via /drafts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_type": {
+                        "type": "string",
+                        "enum": ["email", "linkedin_post"],
+                        "description": "Type of draft",
+                    },
+                    "title": {"type": "string", "description": "Short descriptive title for the draft"},
+                    "content": {"type": "string", "description": "Full draft content"},
+                    "metadata": {
+                        "type": "object",
+                        "description": "For email: {to, subject}. For linkedin_post: {}",
+                    },
+                },
+                "required": ["draft_type", "title", "content"],
+            },
+        },
+    },
 ]
 
 # ── Dispatcher ─────────────────────────────────────────────────────────────
 async def dispatch_tool(name: str, args: dict, memory=None) -> Any:
     """Route a tool call to its implementation."""
-    from tools import shell, browser, github_tool, google_tool, linkedin_tool, memory_tool
+    import config
+    from tools import shell, github_tool, google_tool, linkedin_tool, memory_tool
+
+    if config.LIGHTWEIGHT_MODE:
+        from tools import browser_lite as browser
+    else:
+        from tools import browser
 
     handlers = {
         # Shell
@@ -401,6 +435,7 @@ async def dispatch_tool(name: str, args: dict, memory=None) -> Any:
         "update_goal": lambda: memory_tool.update_goal(memory, **args),
         "complete_goal": lambda: memory_tool.complete_goal(memory, **args),
         "update_behavior": lambda: memory_tool.update_behavior(memory, **args),
+        "save_draft": lambda: memory_tool.save_draft(memory, **args),
     }
 
     handler = handlers.get(name)
