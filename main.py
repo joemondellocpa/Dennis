@@ -14,7 +14,7 @@ from loguru import logger
 from telegram import Bot
 
 import config
-from agent import Agent, Memory
+from agent import Agent, Memory, local_llm
 from agent.scheduler import GoalScheduler
 from agent.notifier import SmartNotifier
 from agent.webhooks import start_webhook_server
@@ -38,6 +38,17 @@ async def main():
 
     memory = Memory()
     logger.info("Memory initialized")
+
+    if config.OLLAMA_ENABLED:
+        ollama_ok = await local_llm.is_available()
+        if ollama_ok:
+            logger.info(f"Local LLM ready: {config.LOCAL_MODEL} @ {config.LOCAL_MODEL_URL}")
+        else:
+            logger.warning(
+                f"OLLAMA_ENABLED=true but model '{config.LOCAL_MODEL}' not found at "
+                f"{config.LOCAL_MODEL_URL}. Falling back to remote API for all tasks. "
+                f"Run: ollama pull {config.LOCAL_MODEL}"
+            )
 
     bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 

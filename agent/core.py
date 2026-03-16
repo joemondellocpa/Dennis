@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from loguru import logger
 
 import config
+from agent import local_llm
 from agent.memory import Memory
 from tools.registry import TOOL_DEFINITIONS, dispatch_tool
 
@@ -414,5 +415,22 @@ class Agent:
         self.memory.update_goal_progress(goal["id"], f"Task completed: {task['description'][:100]}")
 
         if result_summary and len(result_summary) > 50:
-            return f"🤖 **Background update** – *{goal['title']}*\n\n{result_summary}"
+            # Use local LLM to decide if this warrants an immediate notification,
+            # reducing noise from routine progress updates.
+            should_notify = True
+            if config.OLLAMA_ENABLED:
+                score = await local_llm.classify(
+                    f"Does this agent finding genuinely warrant an immediate user notification?\n\n"
+                    f"Goal: {goal['title']}\n"
+                    f"Finding: {result_summary[:400]}\n\n"
+                    f"Consider: Is this actionable, time-sensitive, or significant? "
+                    f"Or is it just routine/incremental progress?\n\nAnswer YES or NO.",
+                    max_tokens=5,
+                )
+                if score is not None and score.strip().upper().startswith("NO"):
+                    should_notify = False
+                    logger.debug(f"Local LLM filtered notification for '{goal['title']}'")
+
+            if should_notify:
+                return f"🤖 **Background update** – *{goal['title']}*\n\n{result_summary}"
         return None

@@ -92,6 +92,20 @@ MEMORY_RETENTION_DAYS = int(os.getenv("MEMORY_RETENTION_DAYS", "90"))
 # Replaces Playwright web browsing with httpx+BeautifulSoup4, skips LinkedIn
 LIGHTWEIGHT_MODE = os.getenv("LIGHTWEIGHT_MODE", "false").lower() == "true"
 
+# ── Local LLM via Ollama (optional, reduces remote API token usage) ─────────
+# Install Ollama (https://ollama.ai) and pull a model, e.g.:
+#   ollama pull deepseek-r1:8b   (Mac mini 16 GB, ~15 tok/s)
+#   ollama pull llama3.2:3b      (Mac mini 8 GB,  ~25 tok/s)
+#   ollama pull llama3.2:1b      (Raspberry Pi 5, ~4 tok/s)
+# Then set OLLAMA_ENABLED=true in .env.
+#
+# Cheap tasks routed locally: goal completion checks, memory pruning summaries,
+# notification worthiness scoring.  Complex tasks (chat, tool-use) stay remote.
+OLLAMA_ENABLED = os.getenv("OLLAMA_ENABLED", "false").lower() == "true"
+LOCAL_MODEL_URL = os.getenv("LOCAL_MODEL_URL", "http://localhost:11434")
+LOCAL_MODEL = os.getenv("LOCAL_MODEL", "deepseek-r1:8b")
+LOCAL_LLM_TIMEOUT = float(os.getenv("LOCAL_LLM_TIMEOUT", "30.0"))
+
 # ── Storage paths ──────────────────────────────────────────────────────────
 MEMORY_DB_PATH = str(DATA_DIR / "memory.db")
 CHROMA_DB_PATH = str(DATA_DIR / "chroma_db")

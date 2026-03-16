@@ -273,6 +273,53 @@ def main():
     else:
         print("  Skipping LinkedIn.")
 
+    # ── 7. Local LLM via Ollama (optional, reduces remote API usage) ───────
+    _section("7. Local LLM via Ollama  (optional, saves API tokens)")
+    print("  A local model handles cheap tasks (goal checks, memory pruning,")
+    print("  notification filtering) so the DeepSeek API is reserved for")
+    print("  complex reasoning.  Requires Ollama installed on this machine.")
+    print()
+    print("  Install Ollama: https://ollama.ai/")
+    print("  Recommended models:")
+    print("    Mac mini 16 GB  →  ollama pull deepseek-r1:8b   (~15 tok/s)")
+    print("    Mac mini  8 GB  →  ollama pull llama3.2:3b      (~25 tok/s)")
+    print("    Raspberry Pi 5  →  ollama pull llama3.2:1b      (~4 tok/s)")
+    print()
+    use_ollama = input("  Enable local LLM? [y/N]: ").strip().lower()
+    if use_ollama == "y":
+        values["OLLAMA_ENABLED"] = "true"
+        values["LOCAL_MODEL_URL"] = _prompt(
+            "  LOCAL_MODEL_URL",
+            existing.get("LOCAL_MODEL_URL", "http://localhost:11434"),
+        )
+        values["LOCAL_MODEL"] = _prompt(
+            "  LOCAL_MODEL (e.g. deepseek-r1:8b, llama3.2:3b)",
+            existing.get("LOCAL_MODEL", "deepseek-r1:8b"),
+        )
+        model = values["LOCAL_MODEL"]
+        base_url = values["LOCAL_MODEL_URL"]
+
+        # Check if Ollama is already running with that model
+        print(f"  Checking {base_url} for model '{model}'...", end=" ", flush=True)
+        try:
+            import httpx
+            r = httpx.get(f"{base_url}/api/tags", timeout=3)
+            if r.status_code == 200:
+                pulled = [m.get("name", "") for m in r.json().get("models", [])]
+                prefix = model.split(":")[0]
+                if any(m.startswith(prefix) for m in pulled):
+                    print("✅  Model already available")
+                else:
+                    print(f"⚠️  Model not found.  Run:  ollama pull {model}")
+            else:
+                print("⚠️  Ollama reachable but returned unexpected response")
+        except Exception:
+            print(f"⚠️  Ollama not reachable.  Start it with: ollama serve")
+            print(f"     Then pull the model:            ollama pull {model}")
+    else:
+        values["OLLAMA_ENABLED"] = "false"
+        print("  Skipping local LLM – all inference will use remote DeepSeek API.")
+
     # ── Save ───────────────────────────────────────────────────────────────
     _section("Saving configuration")
     _write_env(values)
@@ -292,6 +339,11 @@ def main():
 
     ┌─ If Google auth wasn't done yet: ─────────────┐
     │  python scripts/google_auth.py                 │
+    └────────────────────────────────────────────────┘
+
+    ┌─ To pull the local LLM model (if enabled): ───┐
+    │  ollama serve                                  │
+    │  ollama pull deepseek-r1:8b                    │
     └────────────────────────────────────────────────┘
 
     Then send a message to your Telegram bot to get started.

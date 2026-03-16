@@ -21,6 +21,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 import config
+from agent import local_llm
 from agent.core import Agent
 
 
@@ -289,38 +290,46 @@ class GoalScheduler:
 
                 self.agent.memory.mark_goal_completion_checked(goal["id"])
 
-                # Ask the LLM
-                system = await self.agent._build_system_prompt()
                 completed_summary = "\n".join(
                     f"- {t['description'][:80]}: {(t['result'] or '')[:60]}"
                     for t in completed_tasks[-10:]
                 )
-                messages = [
-                    {"role": "system", "content": system},
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Evaluate whether this goal has been achieved:\n\n"
-                            f"Goal: {goal['title']}\n"
-                            f"Description: {goal['description']}\n\n"
-                            f"Completed tasks:\n{completed_summary}\n\n"
-                            f"Reply with COMPLETE if the goal is clearly achieved, "
-                            f"or ONGOING if more work is needed. "
-                            f"Then briefly explain why in one sentence."
-                        ),
-                    },
-                ]
-                if config.DAILY_API_CALL_BUDGET > 0:
-                    if self.agent.memory.get_api_calls_today() >= config.DAILY_API_CALL_BUDGET:
-                        continue
+                eval_prompt = (
+                    f"Evaluate whether this goal has been achieved:\n\n"
+                    f"Goal: {goal['title']}\n"
+                    f"Description: {goal['description']}\n\n"
+                    f"Completed tasks:\n{completed_summary}\n\n"
+                    f"Reply with COMPLETE if the goal is clearly achieved, "
+                    f"or ONGOING if more work is needed. "
+                    f"Then briefly explain why in one sentence."
+                )
 
-                response = await self.agent.client.chat.completions.create(
-                    model=config.DEEPSEEK_MODEL,
-                    messages=messages,
+                # Try local LLM first (free) – fall back to remote DeepSeek
+                verdict = await local_llm.classify(
+                    eval_prompt,
+                    system="You are an AI assistant evaluating whether goals have been achieved.",
                     max_tokens=150,
                 )
-                self.agent.memory.record_api_call(config.DEEPSEEK_MODEL, "completion_check")
-                verdict = response.choices[0].message.content or ""
+
+                if verdict is None:
+                    # Local LLM unavailable – use remote API
+                    if config.DAILY_API_CALL_BUDGET > 0:
+                        if self.agent.memory.get_api_calls_today() >= config.DAILY_API_CALL_BUDGET:
+                            continue
+
+                    system = await self.agent._build_system_prompt()
+                    response = await self.agent.client.chat.completions.create(
+                        model=config.DEEPSEEK_MODEL,
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": eval_prompt},
+                        ],
+                        max_tokens=150,
+                    )
+                    self.agent.memory.record_api_call(config.DEEPSEEK_MODEL, "completion_check")
+                    verdict = response.choices[0].message.content or ""
+                else:
+                    logger.debug(f"Goal completion check via local LLM: {verdict[:60]}")
 
                 if verdict.strip().upper().startswith("COMPLETE"):
                     await self.notify_fn(
@@ -414,20 +423,34 @@ class GoalScheduler:
                     f"[{d['metadata'].get('role','?')}]: {d['content'][:200]}"
                     for d in batch
                 )
-                if config.DAILY_API_CALL_BUDGET > 0:
-                    if self.agent.memory.get_api_calls_today() >= config.DAILY_API_CALL_BUDGET:
-                        break
+                summarise_prompt = f"Summarize these conversation turns in 3-5 sentences:\n\n{text}"
+                summarise_system = (
+                    "You are a memory summarizer. Compress conversations into "
+                    "compact, factual summaries preserving key information."
+                )
 
-                response = await self.agent.client.chat.completions.create(
-                    model=config.DEEPSEEK_MODEL,
-                    messages=[
-                        {"role": "system", "content": "You are a memory summarizer. Compress conversations into compact, factual summaries preserving key information."},
-                        {"role": "user", "content": f"Summarize these conversation turns in 3-5 sentences:\n\n{text}"},
-                    ],
+                # Try local LLM first (free) – fall back to remote
+                summary = await local_llm.classify(
+                    summarise_prompt,
+                    system=summarise_system,
                     max_tokens=300,
                 )
-                self.agent.memory.record_api_call(config.DEEPSEEK_MODEL, "memory_prune")
-                summary = response.choices[0].message.content or ""
+
+                if summary is None:
+                    if config.DAILY_API_CALL_BUDGET > 0:
+                        if self.agent.memory.get_api_calls_today() >= config.DAILY_API_CALL_BUDGET:
+                            break
+
+                    response = await self.agent.client.chat.completions.create(
+                        model=config.DEEPSEEK_MODEL,
+                        messages=[
+                            {"role": "system", "content": summarise_system},
+                            {"role": "user", "content": summarise_prompt},
+                        ],
+                        max_tokens=300,
+                    )
+                    self.agent.memory.record_api_call(config.DEEPSEEK_MODEL, "memory_prune")
+                    summary = response.choices[0].message.content or ""
 
                 ts_start = batch[0]["metadata"].get("timestamp", "?")[:10]
                 ts_end = batch[-1]["metadata"].get("timestamp", "?")[:10]
