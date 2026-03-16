@@ -1,0 +1,12 @@
+.env
+data/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+credentials.json
+data/google_token.json
+data/linkedin_cookies.json
+*.log
+.venv/
+venv/

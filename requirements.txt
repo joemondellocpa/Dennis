@@ -1,0 +1,29 @@
+# Core agent
+openai>=1.30.0              # DeepSeek uses OpenAI-compatible API
+python-telegram-bot>=20.7   # Async Telegram bot
+apscheduler>=3.10.4         # Background task scheduler
+python-dotenv>=1.0.0
+
+# Memory
+chromadb>=0.5.0             # Vector store for semantic memory
+sentence-transformers>=3.0.0 # Local embeddings (no API cost)
+
+# Tools: browser
+playwright>=1.44.0
+
+# Tools: Google
+google-api-python-client>=2.130.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# Tools: GitHub
+PyGithub>=2.3.0
+
+# Tools: LinkedIn (via Playwright, no extra package needed)
+
+# Utilities
+httpx>=0.27.0
+aiofiles>=23.2.1
+pydantic>=2.7.0
+rich>=13.7.0                # Pretty terminal logging
+loguru>=0.7.2
