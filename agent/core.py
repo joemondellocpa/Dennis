@@ -18,13 +18,34 @@ import config
 from agent.memory import Memory
 from tools.registry import TOOL_DEFINITIONS, dispatch_tool
 
-# Tools that require explicit user approval before executing
+# Tools that require explicit user approval before executing (always, no session bypass)
 APPROVAL_REQUIRED_TOOLS = {
     "send_email",
     "linkedin_post",
     "linkedin_send_connection",
-    "run_shell",  # Will prompt for approval on first use per session
+    "run_shell",
 }
+
+# Tools blocked entirely in autonomous (unattended) mode
+AUTONOMOUS_BLOCKED_TOOLS = {
+    "send_email",
+    "linkedin_post",
+    "linkedin_send_connection",
+    "run_shell",  # No shell in background – no user present to supervise
+}
+
+# Shell operator characters that make a command non-read-only
+_SHELL_OPERATORS = (";", "&&", "||", "|", ">", ">>", "<", "`", "$(", "&")
+
+# Read-only shell commands that never need approval
+_READONLY_CMDS = frozenset({
+    "ls", "cat", "echo", "pwd", "date", "whoami", "ps", "df", "du",
+    "find", "grep", "wc", "head", "tail", "stat", "file", "which", "uname",
+    "sw_vers", "system_profiler", "diskutil list",
+})
+
+# Cap tool result size before stuffing into the message context (token saving)
+TOOL_RESULT_MAX_CHARS = 2000
 
 SYSTEM_PROMPT = """You are Dennis, a highly capable personal AI assistant running persistently on a Mac mini.
 
@@ -37,7 +58,7 @@ Your owner communicates with you via Telegram from their phone. You have access 
 - **Email & Calendar**: Read, draft, and send emails; manage calendar events.
 - **LinkedIn**: Research prospects, draft posts, and send connection requests (with user approval).
 - **GitHub**: Read and manage code repositories.
-- **Mac system**: Run shell commands on the Mac mini.
+- **Mac system**: Run shell commands on the Mac mini (requires explicit approval each time).
 
 ## Behavioral rules
 1. **Proactive**: Don't wait to be asked. If you notice something important (urgent email, upcoming meeting, new BD opportunity), flag it.
@@ -46,37 +67,51 @@ Your owner communicates with you via Telegram from their phone. You have access 
 4. **Approval before action**: ALWAYS ask for explicit approval before sending emails, posting to LinkedIn, sending connection requests, or running shell commands that modify system state.
 5. **Concise by default**: Keep responses short unless detail is explicitly requested. Use bullet points.
 6. **Business focus**: Your owner runs a business. Prioritize tasks related to BD, outreach, LinkedIn, market research, and productivity.
+7. **Behavior updates**: When the owner asks you to change how you work (e.g. "focus on X", "be more concise"), use the update_behavior tool to persist that preference.
 
 ## Current context
 - Timezone: {timezone}
 - Current time: {current_time}
 - Active goals: {active_goals}
-"""
+{behavior_section}"""
 
 
 class Agent:
     def __init__(self, memory: Memory, send_message_fn: Callable[[str], Awaitable[None]]):
-        """
-        memory: the Memory instance
-        send_message_fn: async callable to send a message back to the user (e.g. Telegram send)
-        """
         self.memory = memory
         self.send_message = send_message_fn
         self.client = AsyncOpenAI(
             api_key=config.DEEPSEEK_API_KEY,
             base_url=config.DEEPSEEK_BASE_URL,
         )
-        # Tracks tools approved this session (shell approval, etc.)
-        self._approved_tools: set[str] = set()
 
     async def _build_system_prompt(self) -> str:
         goals = self.memory.get_active_goals()
-        goals_str = "\n".join(f"- [{g['priority']}] {g['title']}: {g['description'][:100]}" for g in goals) or "None"
+        goals_str = "\n".join(
+            f"- [{g['priority']}] {g['title']}: {g['description'][:100]}" for g in goals
+        ) or "None"
+
+        behavior = self.memory.get_behavior_config()
+        if behavior:
+            behavior_section = "\n## Behavioral preferences (set by owner)\n" + "\n".join(
+                f"- {k}: {v}" for k, v in behavior.items()
+            )
+        else:
+            behavior_section = ""
+
         return SYSTEM_PROMPT.format(
             timezone=config.AGENT_TIMEZONE,
             current_time=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
             active_goals=goals_str,
+            behavior_section=behavior_section,
         )
+
+    def _is_readonly_shell(self, cmd: str) -> bool:
+        """Return True only if a shell command is provably read-only (no operators, known safe cmd)."""
+        if any(op in cmd for op in _SHELL_OPERATORS):
+            return False
+        first_word = cmd.strip().split()[0].split("/")[-1] if cmd.strip() else ""
+        return first_word in _READONLY_CMDS
 
     async def _needs_approval(self, tool_name: str, args: dict) -> Optional[str]:
         """Return an approval prompt string if tool needs approval, else None."""
@@ -84,13 +119,28 @@ class Agent:
             return None
         if tool_name == "run_shell":
             cmd = args.get("command", "")
-            # Allow read-only commands without approval
-            readonly_prefixes = ("ls", "cat", "echo", "pwd", "date", "whoami", "ps", "df", "du", "find", "grep")
-            if any(cmd.strip().startswith(p) for p in readonly_prefixes):
-                return None
-            if tool_name in self._approved_tools:
-                return None
-        return f"⚠️ Approval needed to run: **{tool_name}**\nArgs: `{json.dumps(args, indent=2)}`\n\nReply **yes** to confirm or **no** to cancel."
+            if self._is_readonly_shell(cmd):
+                return None  # Safe read-only command, no approval needed
+        return (
+            f"⚠️ Approval needed: **{tool_name}**\n"
+            f"```\n{json.dumps(args, indent=2)}\n```\n"
+            f"Reply **yes** to confirm or **no** to cancel."
+        )
+
+    def _truncate_tool_result(self, result: dict) -> dict:
+        """Truncate large string fields in a tool result to keep context small."""
+        result_str = json.dumps(result)
+        if len(result_str) <= TOOL_RESULT_MAX_CHARS:
+            return result
+        # Truncate the content/stdout/body fields which tend to be large
+        truncated = {}
+        for k, v in result.items():
+            if isinstance(v, str) and len(v) > 800:
+                truncated[k] = v[:800] + f"... [truncated, {len(v) - 800} chars omitted]"
+            else:
+                truncated[k] = v
+        truncated["_truncated"] = True
+        return truncated
 
     async def chat(
         self,
@@ -105,11 +155,11 @@ class Agent:
         approval_callback: async fn(prompt: str) -> bool, called when a tool needs approval
         """
         # Retrieve relevant memory
-        memory_hits = self.memory.recall_relevant(user_message, n=5)
+        memory_hits = self.memory.recall_relevant(user_message, n=3)
         memory_context = ""
         if memory_hits:
             memory_context = "\n\n[Relevant memory]\n" + "\n---\n".join(
-                f"[{h['metadata'].get('role','?')} @ {h['metadata'].get('timestamp','?')}]: {h['content'][:300]}"
+                f"[{h['metadata'].get('role','?')} @ {h['metadata'].get('timestamp','?')[:10]}]: {h['content'][:200]}"
                 for h in memory_hits
             )
 
@@ -117,12 +167,11 @@ class Agent:
         if memory_context:
             system += memory_context
 
-        messages = [{"role": "system", "content": system}] + conversation_history
-
-        # Add user message
+        # Keep only the last 10 turns to avoid blowing the context window
+        trimmed_history = conversation_history[-(config.MAX_HISTORY_TURNS * 2):]
+        messages = [{"role": "system", "content": system}] + trimmed_history
         messages.append({"role": "user", "content": user_message})
 
-        # Tool-use loop
         tool_call_count = 0
         final_response = ""
 
@@ -136,15 +185,12 @@ class Agent:
             )
             msg = response.choices[0].message
 
-            # No tool call – final response
             if not msg.tool_calls:
                 final_response = msg.content or ""
                 break
 
-            # Append assistant turn with tool calls
             messages.append(msg)
 
-            # Process each tool call
             for tc in msg.tool_calls:
                 tool_name = tc.function.name
                 try:
@@ -152,10 +198,13 @@ class Agent:
                 except json.JSONDecodeError:
                     args = {}
 
-                # Check approval
+                # Check approval for each call individually (no session-wide bypass)
                 approval_prompt = await self._needs_approval(tool_name, args)
-                if approval_prompt and approval_callback:
-                    approved = await approval_callback(approval_prompt)
+                if approval_prompt:
+                    if approval_callback:
+                        approved = await approval_callback(approval_prompt)
+                    else:
+                        approved = False
                     if not approved:
                         result = {"success": False, "error": "User declined this action."}
                         messages.append({
@@ -165,24 +214,22 @@ class Agent:
                         })
                         tool_call_count += 1
                         continue
-                    if tool_name == "run_shell":
-                        self._approved_tools.add(tool_name)
 
-                logger.info(f"Calling tool: {tool_name}({args})")
+                logger.info(f"Tool: {tool_name}({json.dumps(args)[:100]})")
                 result = await dispatch_tool(tool_name, args, memory=self.memory)
-                logger.info(f"Tool result: {str(result)[:200]}")
+                logger.debug(f"Tool result: {str(result)[:200]}")
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result),
+                    "content": json.dumps(self._truncate_tool_result(result)),
                 })
                 tool_call_count += 1
 
         else:
-            final_response = "I've reached the tool call limit for this turn. Please ask me to continue."
+            final_response = "I've reached the tool call limit for this turn. Ask me to continue if needed."
 
-        # Store this exchange in memory
+        # Store exchange in memory
         self.memory.save_conversation_turn("user", user_message)
         if final_response:
             self.memory.save_conversation_turn("assistant", final_response)
@@ -204,7 +251,6 @@ class Agent:
         for goal in goals:
             pending_tasks = self.memory.get_goal_tasks(goal["id"], status="pending")
             if not pending_tasks:
-                # Ask the agent to plan next tasks for this goal
                 await self._plan_goal_tasks(goal)
                 continue
 
@@ -213,39 +259,75 @@ class Agent:
 
             if result and notify_fn:
                 await notify_fn(result)
-            break  # One goal per iteration
+            break  # One goal per tick
 
     async def _plan_goal_tasks(self, goal: dict):
-        """Ask DeepSeek to break a goal into executable tasks."""
+        """Ask DeepSeek to break a goal into concrete tasks using the create_goal_task tool."""
+        # Loop detection: if we've already created many tasks today, something is wrong
+        today_count = self.memory.get_task_count_today(goal["id"])
+        if today_count >= 8:
+            logger.warning(
+                f"Goal '{goal['title']}' has {today_count} tasks created in the last 24h – "
+                "skipping planning to prevent runaway loop"
+            )
+            return
+
+        # Only expose the task-creation tool so the LLM can't go off on a tangent
+        planning_tools = [t for t in TOOL_DEFINITIONS if t["function"]["name"] == "create_goal_task"]
+
         system = await self._build_system_prompt()
+        recent_tasks = self.memory.get_goal_tasks(goal["id"])[-5:]
+        recent_str = "\n".join(
+            f"- [{t['status']}] {t['description'][:80]}" for t in recent_tasks
+        ) or "None yet"
+
         messages = [
             {"role": "system", "content": system},
             {
                 "role": "user",
                 "content": (
-                    f"I need you to plan the next 3 concrete tasks for this goal:\n"
-                    f"Goal: {goal['title']}\nDescription: {goal['description']}\n"
-                    f"Progress so far: {goal.get('progress_notes', '[]')}\n\n"
-                    f"Use the create_goal_task tool or just list tasks. For each task, be very specific and actionable."
+                    f"Plan the next 2–3 concrete, actionable tasks for this goal.\n\n"
+                    f"Goal: {goal['title']}\n"
+                    f"Description: {goal['description']}\n"
+                    f"Recent tasks: {recent_str}\n\n"
+                    f"Use create_goal_task for each task. Be very specific – "
+                    f"each task should be completable in one autonomous iteration."
                 ),
             },
         ]
-        response = await self.client.chat.completions.create(
-            model=config.DEEPSEEK_MODEL,
-            messages=messages,
-            tools=TOOL_DEFINITIONS,
-            tool_choice="auto",
-            max_tokens=1024,
-        )
-        msg = response.choices[0].message
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                if tc.function.name in ("create_goal",):
-                    # Extract task descriptions and add them
-                    pass
-        # Fallback: create a generic research task
-        self.memory.add_goal_task(goal["id"], f"Research and make progress on: {goal['title']}")
+
+        try:
+            response = await self.client.chat.completions.create(
+                model=config.DEEPSEEK_MODEL,
+                messages=messages,
+                tools=planning_tools,
+                tool_choice={"type": "function", "function": {"name": "create_goal_task"}},
+                max_tokens=1024,
+            )
+            msg = response.choices[0].message
+            tasks_created = 0
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if tc.function.name == "create_goal_task":
+                        try:
+                            args = json.loads(tc.function.arguments)
+                            self.memory.add_goal_task(goal["id"], args["description"])
+                            tasks_created += 1
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"Bad create_goal_task args: {e}")
+
+            if tasks_created == 0:
+                # LLM didn't create tasks (e.g. said the goal is done) – add one fallback
+                self.memory.add_goal_task(
+                    goal["id"],
+                    f"Review progress and determine next step for: {goal['title']}",
+                )
+                logger.info(f"Goal '{goal['title']}': LLM planned 0 tasks, added fallback")
+            else:
+                logger.info(f"Goal '{goal['title']}': planned {tasks_created} tasks")
+
+        except Exception:
+            logger.exception(f"Error planning tasks for goal '{goal['title']}'")
 
     async def _execute_goal_task(self, goal: dict, task: dict) -> Optional[str]:
         """Execute a single goal task autonomously. Returns a user notification if significant."""
@@ -258,10 +340,11 @@ class Agent:
                     f"[AUTONOMOUS BACKGROUND TASK]\n"
                     f"Goal: {goal['title']}\n"
                     f"Task: {task['description']}\n\n"
-                    f"Execute this task using available tools. Do NOT send emails, post to LinkedIn, "
-                    f"or send connection requests without explicit user approval. "
-                    f"If you find something important, prepare a summary to notify the user. "
-                    f"If the task involves drafting (emails, posts), save the draft and report it."
+                    f"Execute this task using available tools. "
+                    f"Do NOT send emails, post to LinkedIn, send connection requests, "
+                    f"or run shell commands – these require user presence. "
+                    f"If you find something important, summarize it so the user can be notified. "
+                    f"If the task involves drafting, save the draft via save_knowledge and report it."
                 ),
             },
         ]
@@ -284,16 +367,20 @@ class Agent:
 
             messages.append(msg)
             for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                # Block actions that need approval in autonomous mode
-                if tc.function.name in {"send_email", "linkedin_post", "linkedin_send_connection"}:
-                    result = {"success": False, "error": "Requires user approval – will present draft to user"}
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+
+                if tc.function.name in AUTONOMOUS_BLOCKED_TOOLS:
+                    result = {"success": False, "error": "Requires user presence – skipped in autonomous mode"}
                 else:
                     result = await dispatch_tool(tc.function.name, args, memory=self.memory)
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": json.dumps(result),
+                    "content": json.dumps(self._truncate_tool_result(result)),
                 })
                 tool_calls_made += 1
 
@@ -301,7 +388,6 @@ class Agent:
         self.memory.complete_goal_task(task["id"], result_summary or "Completed")
         self.memory.update_goal_progress(goal["id"], f"Task completed: {task['description'][:100]}")
 
-        # Only notify if there's a meaningful result
         if result_summary and len(result_summary) > 50:
             return f"🤖 **Background update** – *{goal['title']}*\n\n{result_summary}"
         return None

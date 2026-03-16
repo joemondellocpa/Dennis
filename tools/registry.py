@@ -11,7 +11,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "run_shell",
-            "description": "Execute a shell command on the Mac mini. Use for file operations, running scripts, opening apps, checking system status.",
+            "description": "Execute a shell command on the Mac mini. Use for file operations, running scripts, checking system status. Requires explicit user approval for any non-read-only command.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -84,7 +84,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "send_email",
-            "description": "Send an email via Gmail.",
+            "description": "Send an email via Gmail. Always get user approval before sending.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -291,6 +291,21 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "create_goal_task",
+            "description": "Add a concrete, actionable task to an existing goal's queue.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_id": {"type": "string", "description": "The goal ID to add this task to"},
+                    "description": {"type": "string", "description": "Specific, actionable task description"},
+                },
+                "required": ["goal_id", "description"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_goals",
             "description": "List all active autonomous goals.",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -308,6 +323,43 @@ TOOL_DEFINITIONS = [
                     "progress_note": {"type": "string"},
                 },
                 "required": ["goal_id", "progress_note"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_goal",
+            "description": "Mark a goal as completed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal_id": {"type": "string", "description": "The goal ID to complete"},
+                },
+                "required": ["goal_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_behavior",
+            "description": (
+                "Persist a behavioral preference or working style override. "
+                "Use this when the owner asks you to change how you behave "
+                "(e.g. 'focus on LinkedIn outreach', 'only notify for high-priority findings', "
+                "'be more concise'). These preferences survive restarts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {
+                        "type": "string",
+                        "description": "Setting name (e.g. 'focus_area', 'notification_threshold', 'response_style')",
+                    },
+                    "value": {"type": "string", "description": "The new value for this preference"},
+                },
+                "required": ["key", "value"],
             },
         },
     },
@@ -344,9 +396,11 @@ async def dispatch_tool(name: str, args: dict, memory=None) -> Any:
         "search_memory": lambda: memory_tool.search_memory(memory, **args),
         "save_knowledge": lambda: memory_tool.save_knowledge(memory, **args),
         "create_goal": lambda: memory_tool.create_goal(memory, **args),
+        "create_goal_task": lambda: memory_tool.create_goal_task(memory, **args),
         "list_goals": lambda: memory_tool.list_goals(memory),
         "update_goal": lambda: memory_tool.update_goal(memory, **args),
         "complete_goal": lambda: memory_tool.complete_goal(memory, **args),
+        "update_behavior": lambda: memory_tool.update_behavior(memory, **args),
     }
 
     handler = handlers.get(name)

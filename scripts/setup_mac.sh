@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# Dennis Agent – Mac mini setup script (macOS Monterey)
+# Dennis Agent – Mac mini setup script (macOS Monterey+)
 # Run once: bash scripts/setup_mac.sh
 # ============================================================
 set -e
@@ -43,19 +43,18 @@ playwright install chromium
 # ── 6. Create data directory ───────────────────────────────────────────────
 mkdir -p data/logs
 
-# ── 7. .env file ───────────────────────────────────────────────────────────
-if [ ! -f ".env" ]; then
-  cp .env.example .env
-  echo ""
-  echo "⚠️  Created .env from template. Please fill in your credentials:"
-  echo "    nano $AGENT_DIR/.env"
-  echo ""
-fi
+# ── 7. First-run setup wizard ──────────────────────────────────────────────
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Running first-run setup wizard..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+python scripts/first_run.py
 
 echo ""
 echo "✅ Setup complete!"
 echo ""
-echo "Next steps:"
-echo "  1. Edit .env and fill in all credentials"
-echo "  2. Run: bash scripts/install_service.sh   (to run as a background service)"
-echo "     OR:  source .venv/bin/activate && python main.py   (to run manually)"
+echo "To install Dennis as a background service (auto-start on login):"
+echo "  bash scripts/install_service.sh"
+echo ""
+echo "To run Dennis manually:"
+echo "  source .venv/bin/activate && python main.py"

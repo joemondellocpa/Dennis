@@ -34,9 +34,11 @@ class Memory:
             "knowledge", embedding_function=_ef
         )
 
-        # Structured store
+        # Structured store – WAL mode for better concurrency
         self._db = sqlite3.connect(config.MEMORY_DB_PATH, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=NORMAL")
         self._init_schema()
 
     # ── Schema ─────────────────────────────────────────────────────────────
@@ -95,7 +97,10 @@ class Memory:
     def recall_relevant(self, query: str, n: int = None) -> list[dict]:
         """Semantic search over past conversations."""
         n = n or config.MEMORY_MAX_RESULTS
-        results = self._conv_col.query(query_texts=[query], n_results=min(n, self._conv_col.count() or 1))
+        count = self._conv_col.count()
+        if count == 0:
+            return []
+        results = self._conv_col.query(query_texts=[query], n_results=min(n, count))
         if not results["documents"][0]:
             return []
         return [
@@ -149,6 +154,19 @@ class Memory:
             "SELECT key, value FROM facts WHERE category=?", (category,)
         ).fetchall()
         return {r["key"]: r["value"] for r in rows}
+
+    def delete_fact(self, category: str, key: str):
+        self._db.execute("DELETE FROM facts WHERE category=? AND key=?", (category, key))
+        self._db.commit()
+
+    # ── Behavior config (stored in facts under category='behavior') ────────
+    def set_behavior_config(self, key: str, value: str):
+        """Persist a behavioral override (survives restarts)."""
+        self.set_fact("behavior", key, value)
+
+    def get_behavior_config(self) -> dict:
+        """Return all behavioral overrides as a dict."""
+        return self.get_facts_by_category("behavior")
 
     # ── Goals ──────────────────────────────────────────────────────────────
     def create_goal(self, title: str, description: str, priority: int = 5) -> str:
@@ -208,6 +226,13 @@ class Memory:
         )
         self._db.commit()
 
+    def delete_goal_tasks(self, goal_id: str, status: str = "pending"):
+        """Delete all tasks for a goal with the given status (e.g. to clear a stuck queue)."""
+        self._db.execute(
+            "DELETE FROM goal_tasks WHERE goal_id=? AND status=?", (goal_id, status)
+        )
+        self._db.commit()
+
     def get_goal_tasks(self, goal_id: str, status: str = None) -> list[dict]:
         if status:
             rows = self._db.execute(
@@ -218,3 +243,13 @@ class Memory:
                 "SELECT * FROM goal_tasks WHERE goal_id=?", (goal_id,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_task_count_today(self, goal_id: str) -> int:
+        """Return number of tasks created for this goal in the last 24 hours (loop detection)."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        row = self._db.execute(
+            "SELECT COUNT(*) as n FROM goal_tasks WHERE goal_id=? AND created_at > ?",
+            (goal_id, cutoff),
+        ).fetchone()
+        return row["n"] if row else 0

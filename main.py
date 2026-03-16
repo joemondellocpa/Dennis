@@ -35,9 +35,7 @@ async def main():
     memory = Memory()
     logger.info("Memory initialized")
 
-    # We need a way to send proactive messages from the scheduler.
-    # We'll store the primary user's chat_id after first message, or use env config.
-    # For now, notify_fn sends to all allowed users.
+    # Bot for proactive outbound notifications
     bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 
     async def notify_all_users(message: str):
@@ -52,15 +50,15 @@ async def main():
             except Exception as e:
                 logger.warning(f"Failed to notify user {user_id}: {e}")
 
-    # Initialize agent (send_message_fn used for proactive notifications)
+    # Initialize agent
     agent = Agent(memory=memory, send_message_fn=notify_all_users)
 
-    # Build Telegram app
-    app = build_app(agent)
-
-    # Background scheduler
+    # Background scheduler (pause/resume available via /pause and /resume)
     scheduler = GoalScheduler(agent=agent, notify_fn=notify_all_users)
     scheduler.start()
+
+    # Build Telegram app – pass scheduler so /pause, /resume, /status work
+    app = build_app(agent, scheduler=scheduler)
 
     logger.info("Dennis is running. Send a message on Telegram to get started.")
 

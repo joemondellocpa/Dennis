@@ -4,11 +4,13 @@ Telegram bot interface for Dennis.
 Features:
 - Allowlist-only access (your Telegram user IDs)
 - Per-user conversation history (in-memory, last 20 turns)
-- Approval flow for sensitive tool calls
-- /goals, /memory, /status commands
-- Typing indicator while processing
+- Per-user asyncio locks (prevents concurrent message handling)
+- Approval flow for sensitive tool calls via inline keyboard
+- /goals, /memory, /status, /pause, /resume, /kill_goal, /config, /clear commands
 """
 import asyncio
+import os
+import sys
 from collections import defaultdict
 from typing import Optional
 
@@ -27,35 +29,45 @@ from loguru import logger
 import config
 from agent import Agent, Memory
 
-# Per-user conversation history (last N turns)
-MAX_HISTORY_TURNS = 20
 _histories: dict[int, list[dict]] = defaultdict(list)
-
-# Pending approval requests: callback_id -> asyncio.Future
 _pending_approvals: dict[str, asyncio.Future] = {}
+_user_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_user_lock(user_id: int) -> asyncio.Lock:
+    """Return (creating if needed) a per-user lock to serialize message handling."""
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
 
 
 def _is_allowed(user_id: int) -> bool:
     if not config.TELEGRAM_ALLOWED_USERS:
-        return True  # No allowlist configured → allow all (not recommended for production)
+        return True  # No allowlist → allow all (not recommended)
     return user_id in config.TELEGRAM_ALLOWED_USERS
 
 
 def _trim_history(user_id: int):
     h = _histories[user_id]
-    # Keep last MAX_HISTORY_TURNS pairs (user + assistant)
-    if len(h) > MAX_HISTORY_TURNS * 2:
-        _histories[user_id] = h[-(MAX_HISTORY_TURNS * 2):]
+    if len(h) > config.MAX_HISTORY_TURNS * 2:
+        _histories[user_id] = h[-(config.MAX_HISTORY_TURNS * 2):]
 
 
 async def _send_long(update: Update, text: str):
-    """Split long messages into chunks (Telegram 4096 char limit)."""
+    """Split long messages into Telegram-safe chunks, falling back to plain text on parse error."""
     chunk_size = 4000
     for i in range(0, len(text), chunk_size):
-        await update.effective_message.reply_text(
-            text[i:i + chunk_size],
-            parse_mode=constants.ParseMode.MARKDOWN,
-        )
+        chunk = text[i:i + chunk_size]
+        try:
+            await update.effective_message.reply_text(
+                chunk, parse_mode=constants.ParseMode.MARKDOWN
+            )
+        except Exception:
+            # Markdown parse error (likely split mid-format) – send as plain text
+            try:
+                await update.effective_message.reply_text(chunk)
+            except Exception as e:
+                logger.error(f"Failed to send message chunk: {e}")
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,7 +80,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_text.strip():
         return
 
-    # Check if this is a response to a pending approval
+    # Check if this is a text reply to a pending approval (fallback path)
     pending_key = context.user_data.get("pending_approval_id")
     if pending_key and pending_key in _pending_approvals:
         fut = _pending_approvals.pop(pending_key)
@@ -80,48 +92,53 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     agent: Agent = context.bot_data["agent"]
+    lock = _get_user_lock(user_id)
 
-    # Show typing indicator
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING)
+    # Prevent two simultaneous chat() calls for the same user
+    if lock.locked():
+        await update.message.reply_text("⏳ Still processing your previous message…")
+        return
 
-    history = _histories[user_id]
-
-    # Approval callback: sends a Telegram message and waits for user reply
-    async def approval_callback(prompt: str) -> bool:
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        approval_id = f"approval_{user_id}_{id(fut)}"
-        _pending_approvals[approval_id] = fut
-        context.user_data["pending_approval_id"] = approval_id
-
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ Yes, do it", callback_data=f"approve:{approval_id}"),
-                InlineKeyboardButton("❌ Cancel", callback_data=f"reject:{approval_id}"),
-            ]
-        ])
-        await update.effective_message.reply_text(
-            prompt, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=keyboard
+    async with lock:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING
         )
+
+        history = _histories[user_id]
+
+        async def approval_callback(prompt: str) -> bool:
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future = loop.create_future()
+            approval_id = f"approval_{user_id}_{id(fut)}"
+            _pending_approvals[approval_id] = fut
+            context.user_data["pending_approval_id"] = approval_id
+
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("✅ Yes, do it", callback_data=f"approve:{approval_id}"),
+                    InlineKeyboardButton("❌ Cancel", callback_data=f"reject:{approval_id}"),
+                ]
+            ])
+            await update.effective_message.reply_text(
+                prompt, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=keyboard
+            )
+            try:
+                return await asyncio.wait_for(fut, timeout=120)
+            except asyncio.TimeoutError:
+                _pending_approvals.pop(approval_id, None)
+                context.user_data.pop("pending_approval_id", None)
+                await update.effective_message.reply_text("⏱ Approval timed out – action cancelled.")
+                return False
+
         try:
-            result = await asyncio.wait_for(fut, timeout=120)
-            return result
-        except asyncio.TimeoutError:
-            _pending_approvals.pop(approval_id, None)
-            return False
-
-    try:
-        response = await agent.chat(user_text, history, approval_callback=approval_callback)
-
-        # Update history
-        history.append({"role": "user", "content": user_text})
-        history.append({"role": "assistant", "content": response})
-        _trim_history(user_id)
-
-        await _send_long(update, response)
-
-    except Exception as e:
-        logger.exception("Error in handle_message")
-        await update.message.reply_text(f"⚠️ Error: {e}")
+            response = await agent.chat(user_text, history, approval_callback=approval_callback)
+            history.append({"role": "user", "content": user_text})
+            history.append({"role": "assistant", "content": response})
+            _trim_history(user_id)
+            await _send_long(update, response)
+        except Exception as e:
+            logger.exception("Error in handle_message")
+            await update.message.reply_text(f"⚠️ Error: {e}")
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,10 +154,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fut = _pending_approvals.pop(approval_id, None)
     if fut and not fut.done():
         fut.set_result(action == "approve")
-    await query.edit_message_text(
-        query.message.text + ("\n\n✅ **Approved**" if action == "approve" else "\n\n❌ **Cancelled**"),
-        parse_mode=constants.ParseMode.MARKDOWN,
-    )
+        # Clear the pending key so a subsequent text message isn't misinterpreted
+        # (we can't easily access user_data here without the user_id, so we rely on
+        # the Future being resolved – the approval_callback will see it's done)
+
+    suffix = "\n\n✅ **Approved**" if action == "approve" else "\n\n❌ **Cancelled**"
+    try:
+        await query.edit_message_text(
+            (query.message.text or "") + suffix,
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+    except Exception:
+        pass  # Message may have been deleted or is too old
 
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -150,11 +175,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         f"👋 Hi! I'm **{config.AGENT_NAME}**, your persistent AI assistant.\n\n"
-        "I'm running 24/7 on your Mac mini, working on your goals in the background.\n\n"
+        "Running 24/7 on your Mac mini, working on your goals in the background.\n\n"
         "**Commands:**\n"
         "/goals – view active goals\n"
         "/memory [query] – search your memory\n"
         "/status – system status\n"
+        "/pause – pause background goal execution\n"
+        "/resume – resume background goal execution\n"
+        "/kill_goal [goal_id] – clear pending tasks for a goal\n"
+        "/config – view/set behavioral preferences\n"
         "/clear – clear conversation history\n\n"
         "Just send me a message to get started.",
         parse_mode=constants.ParseMode.MARKDOWN,
@@ -164,6 +193,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update.effective_user.id):
         return
+    import json
     agent: Agent = context.bot_data["agent"]
     goals = agent.memory.get_active_goals()
     if not goals:
@@ -172,10 +202,15 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["**Active Goals:**\n"]
     for g in goals:
-        import json
         notes = json.loads(g.get("progress_notes", "[]"))
         last_note = notes[-1]["note"] if notes else "No updates yet"
-        lines.append(f"🎯 **{g['title']}** (priority {g['priority']})\n{g['description'][:100]}...\n_Last: {last_note[:80]}_\n")
+        pending = agent.memory.get_goal_tasks(g["id"], status="pending")
+        lines.append(
+            f"🎯 **{g['title']}** (priority {g['priority']}, id: `{g['id'][:8]}`)\n"
+            f"{g['description'][:100]}...\n"
+            f"_Last: {last_note[:80]}_\n"
+            f"_Pending tasks: {len(pending)}_\n"
+        )
     await _send_long(update, "\n".join(lines))
 
 
@@ -202,16 +237,101 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     import platform
     from datetime import datetime, timezone
     agent: Agent = context.bot_data["agent"]
+    scheduler = context.bot_data.get("scheduler")
     goals = agent.memory.get_active_goals()
+    paused_str = " ⏸ PAUSED" if (scheduler and scheduler.is_paused) else ""
     msg = (
         f"**{config.AGENT_NAME} Status**\n\n"
         f"⏰ Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n"
         f"🎯 Active goals: {len(goals)}\n"
         f"🧠 Model: {config.DEEPSEEK_MODEL}\n"
-        f"🔄 Background loop: every {config.AUTONOMOUS_LOOP_INTERVAL}s\n"
+        f"🔄 Background loop: every {config.AUTONOMOUS_LOOP_INTERVAL}s{paused_str}\n"
         f"🖥️ Host: {platform.node()}\n"
     )
     await update.message.reply_text(msg, parse_mode=constants.ParseMode.MARKDOWN)
+
+
+async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update.effective_user.id):
+        return
+    scheduler = context.bot_data.get("scheduler")
+    if scheduler:
+        scheduler.pause()
+        await update.message.reply_text("⏸ Background goal execution paused. Use /resume to restart.")
+    else:
+        await update.message.reply_text("Scheduler not available.")
+
+
+async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_allowed(update.effective_user.id):
+        return
+    scheduler = context.bot_data.get("scheduler")
+    if scheduler:
+        scheduler.resume()
+        await update.message.reply_text("▶️ Background goal execution resumed.")
+    else:
+        await update.message.reply_text("Scheduler not available.")
+
+
+async def cmd_kill_goal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear all pending tasks for a goal (stops a runaway goal without deleting it)."""
+    if not _is_allowed(update.effective_user.id):
+        return
+    agent: Agent = context.bot_data["agent"]
+
+    if not context.args:
+        # List goals with their short IDs so the user can pick one
+        goals = agent.memory.get_active_goals()
+        if not goals:
+            await update.message.reply_text("No active goals.")
+            return
+        lines = ["**Pick a goal ID to kill its pending tasks:**\n"]
+        for g in goals:
+            pending = agent.memory.get_goal_tasks(g["id"], status="pending")
+            lines.append(f"`{g['id'][:8]}` – {g['title']} ({len(pending)} pending tasks)")
+        await _send_long(update, "\n".join(lines))
+        return
+
+    goal_prefix = context.args[0].lower()
+    goals = agent.memory.get_active_goals()
+    matched = [g for g in goals if g["id"].lower().startswith(goal_prefix)]
+
+    if not matched:
+        await update.message.reply_text(f"No active goal found with ID starting with `{goal_prefix}`.")
+        return
+    if len(matched) > 1:
+        await update.message.reply_text("Ambiguous ID – please use more characters.")
+        return
+
+    goal = matched[0]
+    agent.memory.delete_goal_tasks(goal["id"], status="pending")
+    await update.message.reply_text(
+        f"✅ Cleared all pending tasks for goal: **{goal['title']}**\n"
+        "The next scheduler tick will re-plan fresh tasks.",
+        parse_mode=constants.ParseMode.MARKDOWN,
+    )
+
+
+async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """View or delete behavioral config entries."""
+    if not _is_allowed(update.effective_user.id):
+        return
+    agent: Agent = context.bot_data["agent"]
+    behavior = agent.memory.get_behavior_config()
+
+    if not behavior:
+        await update.message.reply_text(
+            "No behavioral preferences set yet.\n\n"
+            "Tell me how you want me to behave (e.g. 'Focus on LinkedIn outreach' or "
+            "'Only notify me for high-priority findings') and I'll remember it."
+        )
+        return
+
+    lines = ["**Behavioral Preferences:**\n"]
+    for k, v in behavior.items():
+        lines.append(f"• **{k}**: {v}")
+    lines.append("\n_Tell me to change or remove any of these._")
+    await _send_long(update, "\n".join(lines))
 
 
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -221,17 +341,33 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Conversation history cleared.")
 
 
+async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restart the Dennis process in-place."""
+    if not _is_allowed(update.effective_user.id):
+        return
+    await update.message.reply_text("🔄 Restarting Dennis…")
+    logger.info("Restart requested via Telegram")
+    # Re-exec the current Python process (LaunchAgent will restart if this fails)
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
 # ── App builder ────────────────────────────────────────────────────────────
 
-def build_app(agent: Agent) -> Application:
+def build_app(agent: Agent, scheduler=None) -> Application:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.bot_data["agent"] = agent
+    app.bot_data["scheduler"] = scheduler  # May be None until scheduler is started
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("goals", cmd_goals))
     app.add_handler(CommandHandler("memory", cmd_memory))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("pause", cmd_pause))
+    app.add_handler(CommandHandler("resume", cmd_resume))
+    app.add_handler(CommandHandler("kill_goal", cmd_kill_goal))
+    app.add_handler(CommandHandler("config", cmd_config))
     app.add_handler(CommandHandler("clear", cmd_clear))
+    app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

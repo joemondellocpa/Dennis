@@ -48,6 +48,7 @@ AGENT_NAME = os.getenv("AGENT_NAME", "Dennis")
 AGENT_TIMEZONE = os.getenv("AGENT_TIMEZONE", "America/New_York")
 AUTONOMOUS_LOOP_INTERVAL = int(os.getenv("AUTONOMOUS_LOOP_INTERVAL", "300"))
 MAX_TOOL_CALLS_PER_TURN = int(os.getenv("MAX_TOOL_CALLS_PER_TURN", "10"))
+MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "20"))
 MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "10"))
 
 # ── Storage paths ──────────────────────────────────────────────────────────
