@@ -176,6 +176,16 @@ class Agent:
         final_response = ""
 
         while tool_call_count < config.MAX_TOOL_CALLS_PER_TURN:
+            # Budget guard
+            if config.DAILY_API_CALL_BUDGET > 0:
+                used = self.memory.get_api_calls_today()
+                if used >= config.DAILY_API_CALL_BUDGET:
+                    logger.warning(f"Daily API budget of {config.DAILY_API_CALL_BUDGET} calls reached")
+                    return (
+                        f"⚠️ Daily API call budget ({config.DAILY_API_CALL_BUDGET}) reached. "
+                        "I'll resume tomorrow, or you can raise DAILY_API_CALL_BUDGET in settings."
+                    )
+
             response = await self.client.chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
                 messages=messages,
@@ -183,6 +193,7 @@ class Agent:
                 tool_choice="auto",
                 max_tokens=4096,
             )
+            self.memory.record_api_call(config.DEEPSEEK_MODEL, call_type="chat")
             msg = response.choices[0].message
 
             if not msg.tool_calls:
@@ -297,6 +308,12 @@ class Agent:
         ]
 
         try:
+            if config.DAILY_API_CALL_BUDGET > 0:
+                used = self.memory.get_api_calls_today()
+                if used >= config.DAILY_API_CALL_BUDGET:
+                    logger.warning("Daily API budget reached – skipping goal planning")
+                    return
+
             response = await self.client.chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
                 messages=messages,
@@ -304,6 +321,7 @@ class Agent:
                 tool_choice={"type": "function", "function": {"name": "create_goal_task"}},
                 max_tokens=1024,
             )
+            self.memory.record_api_call(config.DEEPSEEK_MODEL, call_type="plan")
             msg = response.choices[0].message
             tasks_created = 0
             if msg.tool_calls:
@@ -353,6 +371,12 @@ class Agent:
         result_summary = None
 
         while tool_calls_made < 5:
+            if config.DAILY_API_CALL_BUDGET > 0:
+                used = self.memory.get_api_calls_today()
+                if used >= config.DAILY_API_CALL_BUDGET:
+                    logger.warning("Daily API budget reached – stopping autonomous task mid-execution")
+                    break
+
             response = await self.client.chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
                 messages=messages,
@@ -360,6 +384,7 @@ class Agent:
                 tool_choice="auto",
                 max_tokens=2048,
             )
+            self.memory.record_api_call(config.DEEPSEEK_MODEL, call_type="autonomous")
             msg = response.choices[0].message
             if not msg.tool_calls:
                 result_summary = msg.content

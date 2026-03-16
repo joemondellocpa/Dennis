@@ -184,6 +184,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/resume – resume background goal execution\n"
         "/kill_goal [goal_id] – clear pending tasks for a goal\n"
         "/config – view/set behavioral preferences\n"
+        "/budget – API call usage and daily budget\n"
         "/clear – clear conversation history\n\n"
         "Just send me a message to get started.",
         parse_mode=constants.ParseMode.MARKDOWN,
@@ -341,6 +342,34 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Conversation history cleared.")
 
 
+async def cmd_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show API call usage for today and the past week."""
+    if not _is_allowed(update.effective_user.id):
+        return
+    agent: Agent = context.bot_data["agent"]
+    today_count = agent.memory.get_api_calls_today()
+    weekly = agent.memory.get_api_call_stats(days=7)
+    budget = config.DAILY_API_CALL_BUDGET
+
+    budget_str = f"{today_count}/{budget}" if budget > 0 else f"{today_count} (no limit)"
+    pct = int(today_count / budget * 100) if budget > 0 else 0
+    bar_filled = pct // 10
+    bar = "█" * bar_filled + "░" * (10 - bar_filled)
+
+    lines = [
+        f"**API Call Budget**\n",
+        f"Today: `{budget_str}` [{bar}] {pct}%\n",
+        "**Last 7 days:**",
+    ]
+    for row in weekly:
+        lines.append(f"  {row['date']}: {row['calls']} calls")
+
+    if budget > 0 and today_count >= budget:
+        lines.append("\n⛔ Budget exhausted – autonomous tasks are paused until midnight UTC.")
+
+    await _send_long(update, "\n".join(lines))
+
+
 async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Restart the Dennis process in-place."""
     if not _is_allowed(update.effective_user.id):
@@ -366,6 +395,7 @@ def build_app(agent: Agent, scheduler=None) -> Application:
     app.add_handler(CommandHandler("resume", cmd_resume))
     app.add_handler(CommandHandler("kill_goal", cmd_kill_goal))
     app.add_handler(CommandHandler("config", cmd_config))
+    app.add_handler(CommandHandler("budget", cmd_budget))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CallbackQueryHandler(handle_callback))

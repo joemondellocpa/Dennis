@@ -44,6 +44,15 @@ class Memory:
     # ── Schema ─────────────────────────────────────────────────────────────
     def _init_schema(self):
         self._db.executescript("""
+            CREATE TABLE IF NOT EXISTS api_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                model TEXT NOT NULL,
+                call_type TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_calls_date ON api_calls(date);
+
             CREATE TABLE IF NOT EXISTS facts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
@@ -242,6 +251,36 @@ class Memory:
             rows = self._db.execute(
                 "SELECT * FROM goal_tasks WHERE goal_id=?", (goal_id,)
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ── API call budget tracking ────────────────────────────────────────────
+    def record_api_call(self, model: str, call_type: str = "chat"):
+        """Record one LLM API call for budget tracking."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        ts = datetime.now(timezone.utc).isoformat()
+        self._db.execute(
+            "INSERT INTO api_calls (date, model, call_type, created_at) VALUES (?,?,?,?)",
+            (today, model, call_type, ts),
+        )
+        self._db.commit()
+
+    def get_api_calls_today(self) -> int:
+        """Return number of LLM API calls made today."""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        row = self._db.execute(
+            "SELECT COUNT(*) as n FROM api_calls WHERE date=?", (today,)
+        ).fetchone()
+        return row["n"] if row else 0
+
+    def get_api_call_stats(self, days: int = 7) -> list[dict]:
+        """Return daily API call counts for the last N days."""
+        rows = self._db.execute(
+            """SELECT date, COUNT(*) as calls
+               FROM api_calls
+               WHERE date >= date('now', ?)
+               GROUP BY date ORDER BY date DESC""",
+            (f"-{days} days",),
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def get_task_count_today(self, goal_id: str) -> int:

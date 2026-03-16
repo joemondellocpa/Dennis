@@ -22,7 +22,7 @@ if not config.GOOGLE_CREDENTIALS_FILE.exists():
     print("2. Create/select a project")
     print("3. Enable Gmail API, Google Calendar API, Google Drive API")
     print("4. Create OAuth 2.0 credentials (Desktop app)")
-    print("5. Download as 'credentials.json' and place it in the Dennis folder")
+    print(f"5. Download as 'credentials.json' and place it at: {config.GOOGLE_CREDENTIALS_FILE}")
     sys.exit(1)
 
 print("Opening browser for Google authorization...")

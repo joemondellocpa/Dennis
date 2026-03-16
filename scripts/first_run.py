@@ -230,15 +230,23 @@ def main():
 
     # ── 5. Google (Gmail + Calendar) ───────────────────────────────────────
     _section("5. Google  (Gmail + Calendar, optional)")
+    data_dir = ROOT / "data"
+    data_dir.mkdir(exist_ok=True)
     print("  Steps to get credentials.json:")
     print("    a) Go to https://console.cloud.google.com/")
     print("    b) Create/select a project")
     print("    c) Enable: Gmail API, Google Calendar API, Google Drive API")
     print("    d) Create OAuth 2.0 credentials → Desktop App")
     print("    e) Download as 'credentials.json' and place it here:")
-    print(f"       {ROOT}/credentials.json")
+    print(f"       {data_dir}/credentials.json")
 
-    creds_file = ROOT / "credentials.json"
+    # Also accept old root-level placement and move it automatically
+    creds_file = data_dir / "credentials.json"
+    old_creds = ROOT / "credentials.json"
+    if not creds_file.exists() and old_creds.exists():
+        import shutil
+        shutil.move(str(old_creds), str(creds_file))
+        print(f"  ✅ Moved credentials.json → data/credentials.json")
     if creds_file.exists():
         print("  ✅ Found credentials.json")
         run_now = input("  Run Google OAuth browser flow now? [Y/n]: ").strip().lower()

@@ -1,12 +1,17 @@
+# Secrets and credentials – NEVER commit these
 .env
+credentials.json
 data/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-credentials.json
-data/google_token.json
-data/linkedin_cookies.json
-*.log
+
+# Virtual environment
 .venv/
 venv/
+
+# Logs
+*.log
