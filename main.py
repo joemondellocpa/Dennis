@@ -10,6 +10,9 @@ import asyncio
 import sys
 from pathlib import Path
 
+import nest_asyncio
+nest_asyncio.apply()
+
 from loguru import logger
 from telegram import Bot
 
