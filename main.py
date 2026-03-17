@@ -10,9 +10,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import nest_asyncio
-nest_asyncio.apply()
-
 from loguru import logger
 from telegram import Bot
 
@@ -80,10 +77,15 @@ async def main():
     app = build_app(agent, scheduler=scheduler)
     logger.info("Dennis is running. Send a message on Telegram to get started.")
 
-    await app.run_polling(
-        drop_pending_updates=True,
-        allowed_updates=["message", "callback_query"],
-    )
+    async with app:
+        await app.start()
+        await app.updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query"],
+        )
+        await asyncio.Event().wait()  # run forever until KeyboardInterrupt
+        await app.updater.stop()
+        await app.stop()
 
 
 if __name__ == "__main__":
