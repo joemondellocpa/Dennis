@@ -471,6 +471,11 @@ class Memory:
         ).fetchone()
         return row["n"] if row else 0
 
+    def reset_api_calls_today(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self._db.execute("DELETE FROM api_calls WHERE date=?", (today,))
+        self._db.commit()
+
     def get_api_call_stats(self, days: int = 7) -> list[dict]:
         rows = self._db.execute(
             """SELECT date, COUNT(*) as calls

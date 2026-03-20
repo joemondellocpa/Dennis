@@ -724,6 +724,20 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Conversation history cleared.")
 
 
+async def cmd_reset_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reset today's API call counter so the budget limit is lifted immediately."""
+    if not _is_allowed(update.effective_user.id):
+        return
+    agent: Agent = context.bot_data["agent"]
+    before = agent.memory.get_api_calls_today()
+    agent.memory.reset_api_calls_today()
+    budget = config.DAILY_API_CALL_BUDGET
+    await update.message.reply_text(
+        f"✅ Budget reset. Cleared {before} calls recorded today.\n"
+        f"Current limit: {budget if budget > 0 else 'unlimited'} calls/day."
+    )
+
+
 async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_allowed(update.effective_user.id):
         return
@@ -807,6 +821,7 @@ def build_app(agent: Agent, scheduler=None) -> Application:
     app.add_handler(CommandHandler("kill_goal", cmd_kill_goal))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("clear", cmd_clear))
+    app.add_handler(CommandHandler("reset_budget", cmd_reset_budget))
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CommandHandler("shell", cmd_shell))
     app.add_handler(CallbackQueryHandler(handle_callback))
