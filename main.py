@@ -68,7 +68,7 @@ async def main():
     notifier = SmartNotifier(memory=memory, raw_notify=_raw_notify)
 
     agent = Agent(memory=memory, send_message_fn=notifier.send)
-    scheduler = GoalScheduler(agent=agent, notify_fn=notifier.send)
+    scheduler = GoalScheduler(agent=agent, notify_fn=notifier.send, notifier=notifier)
     scheduler.start()
 
     # Optional webhook server (background thread)

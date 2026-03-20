@@ -18,20 +18,22 @@ from chromadb.utils import embedding_functions
 import config
 
 
-# ── Embedding function (local, no API cost) ────────────────────────────────
-_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
-)
+def _make_embedding_function():
+    """Create the sentence-transformer embedding function lazily to avoid import-time downloads."""
+    return embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name="all-MiniLM-L6-v2"
+    )
 
 
 class Memory:
     def __init__(self):
+        ef = _make_embedding_function()
         self._chroma = chromadb.PersistentClient(path=config.CHROMA_DB_PATH)
         self._conv_col = self._chroma.get_or_create_collection(
-            "conversations", embedding_function=_ef
+            "conversations", embedding_function=ef
         )
         self._know_col = self._chroma.get_or_create_collection(
-            "knowledge", embedding_function=_ef
+            "knowledge", embedding_function=ef
         )
 
         self._db = sqlite3.connect(config.MEMORY_DB_PATH, check_same_thread=False)

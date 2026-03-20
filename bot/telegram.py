@@ -435,6 +435,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/kill_goal [id] – clear pending tasks for a goal\n"
         "/export – export memory to markdown\n"
         "/clear – clear conversation history\n"
+        "/reset_budget – reset today's API call counter\n"
         "/restart – restart the agent\n"
         "/shell <cmd> – run a shell command directly\n\n"
         "You can also send voice messages, PDFs, or images.",

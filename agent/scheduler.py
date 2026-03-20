@@ -30,10 +30,13 @@ class GoalScheduler:
         self,
         agent: Agent,
         notify_fn: Callable[[str], Awaitable[None]],
+        notifier=None,
     ):
         self.agent = agent
         # notify_fn should be a SmartNotifier.send or equivalent
         self.notify_fn = notify_fn
+        # notifier is the SmartNotifier instance (for flush_queued access)
+        self._notifier = notifier
         self._scheduler = AsyncIOScheduler(timezone=config.AGENT_TIMEZONE)
         self._running = False
         self._paused = False
@@ -115,7 +118,6 @@ class GoalScheduler:
             await self._process_recurring_goals()
             await self.agent.autonomous_run(notify_fn=self.notify_fn)
             await self._check_goal_completion()
-            await self._process_webhook_events()
         except Exception:
             logger.exception("Error in autonomous tick")
 
@@ -163,9 +165,8 @@ class GoalScheduler:
 
     async def _flush_quiet_queue(self):
         try:
-            from agent.notifier import SmartNotifier
-            if isinstance(self.notify_fn, SmartNotifier):
-                await self.notify_fn.flush_queued()
+            if self._notifier is not None:
+                await self._notifier.flush_queued()
             else:
                 # Fallback: check memory directly
                 due = self.agent.memory.get_due_notifications()

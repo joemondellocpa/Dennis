@@ -48,7 +48,8 @@ _READONLY_CMDS = frozenset({
     "ps", "top", "date", "whoami", "uname", "uptime", "id",
     "which", "type", "sw_vers", "system_profiler", "diskutil",
     # network / info (read-only)
-    "ping", "curl", "wget", "nslookup", "dig", "netstat", "ifconfig", "hostname",
+    # Note: curl/wget excluded – they can write files with -o/-O flags without shell operators
+    "ping", "nslookup", "dig", "netstat", "ifconfig", "hostname",
     # python / pip (read-only queries)
     "python", "python3", "pip", "pip3",
     # sqlite read queries
