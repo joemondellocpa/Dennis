@@ -799,10 +799,51 @@ async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed to run command: {e}")
 
 
+# ── Startup message ─────────────────────────────────────────────────────────
+
+async def _send_startup_message(app: Application) -> None:
+    """Send a status summary to all allowed users when Dennis comes online."""
+    if not config.TELEGRAM_ALLOWED_USERS:
+        return
+    import platform
+    from datetime import datetime, timezone
+    agent: Agent = app.bot_data["agent"]
+    scheduler = app.bot_data.get("scheduler")
+    goals = agent.memory.get_active_goals()
+    paused_str = " ⏸ PAUSED" if (scheduler and scheduler.is_paused) else ""
+
+    lines = [
+        f"✅ *{config.AGENT_NAME} is online*\n",
+        f"⏰ {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"🖥️ Host: {platform.node()}",
+        f"🔄 Background loop: every {config.AUTONOMOUS_LOOP_INTERVAL}s{paused_str}",
+        f"🎯 Active goals: {len(goals)}",
+    ]
+
+    if goals:
+        lines.append("")
+        for g in goals:
+            notes = json.loads(g.get("progress_notes", "[]"))
+            last_note = notes[-1]["note"] if notes else "No updates yet"
+            pending = agent.memory.get_goal_tasks(g["id"], status="pending")
+            lines.append(
+                f"• *{g['title']}* (priority {g['priority']})\n"
+                f"  _{last_note[:100]}_\n"
+                f"  Pending tasks: {len(pending)}"
+            )
+
+    msg = "\n".join(lines)
+    for uid in config.TELEGRAM_ALLOWED_USERS:
+        try:
+            await app.bot.send_message(uid, msg, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            logger.warning(f"Could not send startup message to user {uid}")
+
+
 # ── App builder ────────────────────────────────────────────────────────────
 
 def build_app(agent: Agent, scheduler=None) -> Application:
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
+    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).concurrent_updates(True).post_init(_send_startup_message).build()
     app.bot_data["agent"] = agent
     app.bot_data["scheduler"] = scheduler
 
