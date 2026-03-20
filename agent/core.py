@@ -6,6 +6,7 @@ Runs DeepSeek with full tool-use loop. Handles:
 - Tool dispatch (shell, browser, GitHub, Google, LinkedIn, memory)
 - Safety guardrails (approval required for destructive/social actions)
 """
+import re
 import json
 import asyncio
 from datetime import datetime, timezone
@@ -129,6 +130,76 @@ class Agent:
         first_word = cmd.strip().split()[0].split("/")[-1] if cmd.strip() else ""
         return first_word in _READONLY_CMDS
 
+    def _is_readonly_pipe(self, cmd: str) -> bool:
+        """Return True if command is a pipe of only read-only commands with no other dangerous operators."""
+        dangerous_ops = (";", "&&", "||", ">", ">>", "<", "`", "$(", "&")
+        if any(op in cmd for op in dangerous_ops):
+            return False
+        if "|" not in cmd:
+            return False
+        for part in cmd.split("|"):
+            part = part.strip()
+            first_word = part.split()[0].split("/")[-1] if part.split() else ""
+            if first_word not in _READONLY_CMDS:
+                return False
+        return True
+
+    def _assess_shell_risk(self, cmd: str) -> str:
+        """Return a human-readable explanation of the risks of running a shell command."""
+        risks = []
+
+        if re.search(r"\brm\b", cmd):
+            if re.search(r"-[^- ]*[rf]|--(recursive|force)", cmd):
+                risks.append("Recursive/force delete — permanently removes files or directories, no undo")
+            else:
+                risks.append("Deletes files permanently (no Trash)")
+
+        if re.search(r"\bsudo\b|\bsu\b", cmd):
+            risks.append("Runs with root/admin privileges — can modify any part of the system")
+
+        if re.search(r"\bchmod\b|\bchown\b|\bchgrp\b", cmd):
+            risks.append("Changes file permissions or ownership")
+
+        if re.search(r"\bkill\b|\bpkill\b|\bkillall\b", cmd):
+            risks.append("Terminates running processes, possibly causing data loss")
+
+        if re.search(r"\bdd\b\s", cmd):
+            risks.append("Low-level disk write — can corrupt or overwrite storage if wrong target")
+
+        if re.search(r"\bmkfs\b|\bfdisk\b|\bdiskutil\s+erase\b", cmd):
+            risks.append("Disk formatting — irreversible data loss")
+
+        if re.search(r"\bdefaults\s+write\b|\blaunchctl\b|\bsystemctl\b|\bsystemsetup\b", cmd):
+            risks.append("Modifies macOS system or app configuration")
+
+        if re.search(r"\bcrontab\b", cmd):
+            risks.append("Modifies scheduled tasks (cron jobs)")
+
+        if re.search(r"\bbrew\s+install\b|\bpip\s+install\b|\bnpm\s+install\b|\bapt\b|\byum\b", cmd):
+            risks.append("Installs software — modifies system packages")
+
+        if re.search(r"\bgit\s+(push|commit|reset|rebase|checkout|branch\s+-[Dd])\b", cmd):
+            risks.append("Git write operation — modifies repository state")
+
+        if re.search(r"\bcurl\b.*\s-[^' ]*[oO]|\bwget\b", cmd):
+            risks.append("Downloads files from the internet")
+
+        if ">>" in cmd:
+            risks.append("Appends output to a file")
+        elif ">" in cmd:
+            risks.append("Overwrites file content — existing data will be lost")
+
+        if re.search(r"[;]|&&|\|\|", cmd):
+            risks.append("Chains multiple commands — each runs in sequence")
+
+        if "`" in cmd or "$(" in cmd:
+            risks.append("Contains command substitution — executes nested commands")
+
+        if not risks:
+            risks.append("Modifies system state (not a read-only operation)")
+
+        return "\n".join(f"• {r}" for r in risks)
+
     async def _needs_approval(self, tool_name: str, args: dict) -> Optional[str]:
         """Return an approval prompt string if tool needs approval, else None."""
         if tool_name not in APPROVAL_REQUIRED_TOOLS:
@@ -137,6 +208,15 @@ class Agent:
             cmd = args.get("command", "")
             if self._is_readonly_shell(cmd):
                 return None  # Safe read-only command, no approval needed
+            if self._is_readonly_pipe(cmd):
+                return None  # Safe pipe of read-only commands, no approval needed
+            risk_explanation = self._assess_shell_risk(cmd)
+            return (
+                f"⚠️ Shell command needs approval\n"
+                f"```\n{cmd}\n```\n"
+                f"**Risks:**\n{risk_explanation}\n\n"
+                f"Reply **yes** to confirm or **no** to cancel."
+            )
         return (
             f"⚠️ Approval needed: **{tool_name}**\n"
             f"```\n{json.dumps(args, indent=2)}\n```\n"

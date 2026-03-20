@@ -88,10 +88,19 @@ class TestNeedsApproval:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_destructive_shell_needs_approval(self):
+    async def test_destructive_shell_needs_approval_with_risk(self):
         result = await self.agent._needs_approval("run_shell", {"command": "rm -rf /tmp/foo"})
         assert result is not None
-        assert "Approval needed" in result
+        assert "needs approval" in result
+        assert "Risks:" in result
+        assert "Recursive/force delete" in result
+
+    @pytest.mark.asyncio
+    async def test_sudo_command_explains_root_risk(self):
+        result = await self.agent._needs_approval("run_shell", {"command": "sudo chmod 777 /etc"})
+        assert result is not None
+        assert "root/admin privileges" in result
+        assert "permissions" in result
 
     @pytest.mark.asyncio
     async def test_send_email_always_needs_approval(self):
@@ -109,9 +118,20 @@ class TestNeedsApproval:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_shell_with_pipe_needs_approval_even_if_starts_with_ls(self):
+    async def test_readonly_pipe_needs_no_approval(self):
+        result = await self.agent._needs_approval("run_shell", {"command": "ps aux | grep python"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_readonly_pipe_multiple_stages_needs_no_approval(self):
+        result = await self.agent._needs_approval("run_shell", {"command": "cat file.txt | grep foo | wc -l"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_shell_pipe_with_destructive_cmd_needs_approval(self):
         result = await self.agent._needs_approval("run_shell", {"command": "ls | rm dangerous"})
         assert result is not None
+        assert "Risks:" in result
 
 
 # ── _truncate_tool_result ──────────────────────────────────────────────────
