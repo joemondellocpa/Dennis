@@ -135,12 +135,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             approval_id = f"approval_{user_id}_{id(fut)}"
             _pending_approvals[approval_id] = fut
             context.user_data["pending_approval_id"] = approval_id
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Yes, do it", callback_data=f"approve:{approval_id}"),
-                InlineKeyboardButton("❌ Cancel", callback_data=f"reject:{approval_id}"),
-            ]])
             await update.effective_message.reply_text(
-                prompt, reply_markup=keyboard
+                prompt + "\n\nReply **yes** to approve or **no** to cancel.",
+                parse_mode=constants.ParseMode.MARKDOWN,
             )
             try:
                 return await asyncio.wait_for(fut, timeout=120)
