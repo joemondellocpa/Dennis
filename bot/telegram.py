@@ -802,7 +802,7 @@ async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── App builder ────────────────────────────────────────────────────────────
 
 def build_app(agent: Agent, scheduler=None) -> Application:
-    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
+    app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).concurrent_updates(True).build()
     app.bot_data["agent"] = agent
     app.bot_data["scheduler"] = scheduler
 
