@@ -40,9 +40,24 @@ _SHELL_OPERATORS = (";", "&&", "||", "|", ">", ">>", "<", "`", "$(", "&")
 
 # Read-only shell commands that never need approval
 _READONLY_CMDS = frozenset({
-    "ls", "cat", "echo", "pwd", "date", "whoami", "ps", "df", "du",
-    "find", "grep", "wc", "head", "tail", "stat", "file", "which", "uname",
-    "sw_vers", "system_profiler", "diskutil list",
+    # filesystem / inspection
+    "ls", "cat", "echo", "pwd", "find", "stat", "file", "du", "df",
+    "head", "tail", "wc", "grep", "diff", "less", "more",
+    # process / system info
+    "ps", "top", "date", "whoami", "uname", "uptime", "id",
+    "which", "type", "sw_vers", "system_profiler", "diskutil",
+    # network / info (read-only)
+    "ping", "curl", "wget", "nslookup", "dig", "netstat", "ifconfig", "hostname",
+    # python / pip (read-only queries)
+    "python", "python3", "pip", "pip3",
+    # sqlite read queries
+    "sqlite3",
+    # git read operations
+    "git",
+    # package managers (list/info only — write ops use operators so still caught)
+    "brew", "npm", "node",
+    # misc safe
+    "open", "pbpaste", "pbcopy", "say", "env", "printenv", "history",
 })
 
 # Cap tool result size before stuffing into the message context (token saving)
