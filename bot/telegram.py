@@ -140,7 +140,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("❌ Cancel", callback_data=f"reject:{approval_id}"),
             ]])
             await update.effective_message.reply_text(
-                prompt, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=keyboard
+                prompt, reply_markup=keyboard
             )
             try:
                 return await asyncio.wait_for(fut, timeout=120)
