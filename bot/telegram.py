@@ -10,7 +10,7 @@ Features:
 - Voice message transcription (faster-whisper, on-device)
 - File attachment handling (PDF, text, images)
 - Commands: /start, /goals, /memory, /status, /pause, /resume,
-            /kill_goal, /config, /budget, /drafts, /export, /clear, /restart
+            /kill_goal, /config, /budget, /drafts, /export, /clear, /restart, /shell
 """
 import asyncio
 import json
@@ -452,7 +452,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/kill_goal [id] – clear pending tasks for a goal\n"
         "/export – export memory to markdown\n"
         "/clear – clear conversation history\n"
-        "/restart – restart the agent\n\n"
+        "/restart – restart the agent\n"
+        "/shell <cmd> – run a shell command directly\n\n"
         "You can also send voice messages, PDFs, or images.",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
@@ -731,6 +732,62 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Execute a shell command directly and return the output. No API call."""
+    if not _is_allowed(update.effective_user.id):
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/shell <command>`\nExample: `/shell ls -la`",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+
+    command = " ".join(context.args)
+    await context.bot.send_chat_action(
+        chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING
+    )
+
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=Path(__file__).parent.parent,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            await update.message.reply_text(
+                f"⏱ Command timed out after 60s:\n`{command}`",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+            return
+
+        output = stdout.decode(errors="replace")
+        exit_code = proc.returncode
+        max_output = 3800
+        truncated = len(output) > max_output
+        output = output[-max_output:] if truncated else output
+
+        header = f"$ {command}\n"
+        footer = f"\n[exit {exit_code}]" + (" (truncated)" if truncated else "")
+        reply = f"```\n{header}{output}{footer}\n```"
+
+        try:
+            await update.message.reply_text(reply, parse_mode=constants.ParseMode.MARKDOWN)
+        except Exception:
+            # Fallback without markdown if output breaks formatting
+            await update.message.reply_text(f"$ {command}\n\n{output}\n[exit {exit_code}]")
+
+    except Exception as e:
+        logger.exception("Error in /shell")
+        await update.message.reply_text(f"❌ Failed to run command: {e}")
+
+
 # ── App builder ────────────────────────────────────────────────────────────
 
 def build_app(agent: Agent, scheduler=None) -> Application:
@@ -751,6 +808,7 @@ def build_app(agent: Agent, scheduler=None) -> Application:
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("restart", cmd_restart))
+    app.add_handler(CommandHandler("shell", cmd_shell))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
