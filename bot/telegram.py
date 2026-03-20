@@ -5,12 +5,13 @@ Features:
 - Allowlist-only access
 - Per-user conversation history (last MAX_HISTORY_TURNS turns)
 - Per-user asyncio locks (prevents concurrent message handling)
-- Approval flow for sensitive tool calls via inline keyboard
-- Draft review queue: /drafts, approve/edit/reject
+- Approval flow for sensitive tool calls via text reply (yes/no)
+- Draft review queue: /drafts, /approve_draft <id>, /reject_draft <id>
 - Voice message transcription (faster-whisper, on-device)
 - File attachment handling (PDF, text, images)
 - Commands: /start, /goals, /memory, /status, /pause, /resume,
-            /kill_goal, /config, /budget, /drafts, /export, /clear, /restart, /shell
+            /kill_goal, /config, /budget, /drafts, /approve_draft, /reject_draft,
+            /export, /clear, /restart, /shell
 """
 import asyncio
 import json
@@ -28,9 +29,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
-    CallbackQueryHandler,
 )
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
 
 import config
@@ -94,14 +93,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         agent.memory.update_draft_content(editing_draft_id, user_text)
         draft = agent.memory.get_draft(editing_draft_id)
         if draft:
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Approve", callback_data=f"draft_approve:{editing_draft_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"draft_reject:{editing_draft_id}"),
-            ]])
+            short_id = editing_draft_id[:8]
             await update.message.reply_text(
-                f"📝 **Draft updated:**\n\n{user_text[:800]}",
+                f"📝 **Draft updated:**\n\n{user_text[:800]}\n\n"
+                f"Reply `/approve_draft {short_id}` to send or `/reject_draft {short_id}` to discard.",
                 parse_mode=constants.ParseMode.MARKDOWN,
-                reply_markup=keyboard,
             )
         return
 
@@ -349,84 +345,72 @@ async def _extract_file_text(file_path: str, suffix: str) -> str:
     return ""
 
 
-# ── Inline keyboard callbacks ──────────────────────────────────────────────
+# ── Draft approval commands ─────────────────────────────────────────────────
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data or ""
+async def _execute_draft(draft: dict, agent: Agent) -> str:
+    """Execute an approved draft and return a status string."""
+    metadata = json.loads(draft.get("metadata", "{}"))
+    try:
+        from tools import dispatch_tool
+        if draft["type"] == "email":
+            result = await dispatch_tool("send_email", {
+                "to": metadata.get("to", ""),
+                "subject": metadata.get("subject", draft["title"]),
+                "body": draft["content"],
+            }, memory=agent.memory)
+        elif draft["type"] == "linkedin_post":
+            result = await dispatch_tool("linkedin_post", {
+                "content": draft["content"],
+            }, memory=agent.memory)
+        else:
+            result = {"success": False, "error": f"Unknown draft type: {draft['type']}"}
+        return "✅ Sent!" if result.get("success") else f"❌ Failed: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error executing draft: {e}"
 
-    if ":" not in data:
+
+def _find_draft_by_prefix(agent: Agent, id_prefix: str):
+    """Return the first pending draft whose ID starts with id_prefix, or None."""
+    for draft in agent.memory.get_pending_drafts():
+        if draft["id"].startswith(id_prefix):
+            return draft
+    return None
+
+
+async def cmd_approve_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Approve and send a pending draft: /approve_draft <id>"""
+    if not _is_allowed(update.effective_user.id):
         return
-
-    action, item_id = data.split(":", 1)
-
-    # ── Approval callbacks ──
-    if action in ("approve", "reject"):
-        fut = _pending_approvals.pop(item_id, None)
-        if fut and not fut.done():
-            fut.set_result(action == "approve")
-        suffix = "\n\n✅ **Approved**" if action == "approve" else "\n\n❌ **Cancelled**"
-        try:
-            await query.edit_message_text(
-                (query.message.text or "") + suffix,
-                parse_mode=constants.ParseMode.MARKDOWN,
-            )
-        except Exception:
-            pass
+    if not context.args:
+        await update.message.reply_text("Usage: /approve_draft <draft-id>")
         return
+    agent: Agent = context.bot_data["agent"]
+    draft = _find_draft_by_prefix(agent, context.args[0])
+    if not draft:
+        await update.message.reply_text("Draft not found. Use /drafts to see pending drafts.")
+        return
+    agent.memory.resolve_draft(draft["id"], "approved")
+    await update.message.reply_text(f"✅ Approved — sending _{draft['title']}_…",
+                                    parse_mode=constants.ParseMode.MARKDOWN)
+    status = await _execute_draft(draft, agent)
+    await update.message.reply_text(status)
 
-    # ── Draft callbacks ──
-    if action in ("draft_approve", "draft_reject", "draft_edit"):
-        agent: Agent = context.bot_data["agent"]
-        draft = agent.memory.get_draft(item_id)
-        if not draft:
-            await query.edit_message_text("Draft not found (may have already been resolved).")
-            return
 
-        if action == "draft_reject":
-            agent.memory.resolve_draft(item_id, "rejected")
-            await query.edit_message_text(f"❌ Draft rejected: _{draft['title']}_",
-                                           parse_mode=constants.ParseMode.MARKDOWN)
-            return
-
-        if action == "draft_edit":
-            context.user_data["editing_draft_id"] = item_id
-            await query.edit_message_text(
-                f"✏️ **Editing draft:** _{draft['title']}_\n\n"
-                f"Reply with the new content:",
-                parse_mode=constants.ParseMode.MARKDOWN,
-            )
-            return
-
-        if action == "draft_approve":
-            agent.memory.resolve_draft(item_id, "approved")
-            await query.edit_message_text(
-                f"✅ Draft approved – sending: _{draft['title']}_…",
-                parse_mode=constants.ParseMode.MARKDOWN,
-            )
-
-            # Execute the draft action
-            metadata = json.loads(draft.get("metadata", "{}"))
-            try:
-                from tools import dispatch_tool
-                if draft["type"] == "email":
-                    result = await dispatch_tool("send_email", {
-                        "to": metadata.get("to", ""),
-                        "subject": metadata.get("subject", draft["title"]),
-                        "body": draft["content"],
-                    }, memory=agent.memory)
-                elif draft["type"] == "linkedin_post":
-                    result = await dispatch_tool("linkedin_post", {
-                        "content": draft["content"],
-                    }, memory=agent.memory)
-                else:
-                    result = {"success": False, "error": f"Unknown draft type: {draft['type']}"}
-
-                status = "✅ Sent!" if result.get("success") else f"❌ Failed: {result.get('error')}"
-                await query.message.reply_text(status)
-            except Exception as e:
-                await query.message.reply_text(f"❌ Error executing draft: {e}")
+async def cmd_reject_draft(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reject and discard a pending draft: /reject_draft <id>"""
+    if not _is_allowed(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /reject_draft <draft-id>")
+        return
+    agent: Agent = context.bot_data["agent"]
+    draft = _find_draft_by_prefix(agent, context.args[0])
+    if not draft:
+        await update.message.reply_text("Draft not found. Use /drafts to see pending drafts.")
+        return
+    agent.memory.resolve_draft(draft["id"], "rejected")
+    await update.message.reply_text(f"❌ Draft rejected: _{draft['title']}_",
+                                    parse_mode=constants.ParseMode.MARKDOWN)
 
 
 # ── Commands ───────────────────────────────────────────────────────────────
@@ -440,6 +424,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "**Commands:**\n"
         "/goals – view active goals\n"
         "/drafts – review pending email/post drafts\n"
+        "/approve_draft <id> – approve and send a draft\n"
+        "/reject_draft <id> – discard a draft\n"
         "/memory [query] – search your memory\n"
         "/status – system status\n"
         "/budget – API call usage\n"
@@ -457,7 +443,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show all pending drafts with approve/edit/reject buttons."""
+    """Show all pending drafts with text commands to approve or reject."""
     if not _is_allowed(update.effective_user.id):
         return
     agent: Agent = context.bot_data["agent"]
@@ -476,22 +462,16 @@ async def cmd_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif draft["type"] == "linkedin_post":
             meta_str = "\n_LinkedIn post_"
 
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Approve", callback_data=f"draft_approve:{draft['id']}"),
-            InlineKeyboardButton("✏️ Edit", callback_data=f"draft_edit:{draft['id']}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"draft_reject:{draft['id']}"),
-        ]])
-
+        short_id = draft["id"][:8]
         text = (
             f"📝 **{draft['title']}**{meta_str}\n\n"
-            f"{preview}{'…' if len(draft['content']) > 400 else ''}"
+            f"{preview}{'…' if len(draft['content']) > 400 else ''}\n\n"
+            f"`/approve_draft {short_id}` · `/reject_draft {short_id}`"
         )
         try:
-            await update.message.reply_text(
-                text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=keyboard
-            )
+            await update.message.reply_text(text, parse_mode=constants.ParseMode.MARKDOWN)
         except Exception:
-            await update.message.reply_text(text, reply_markup=keyboard)
+            await update.message.reply_text(text)
 
     if len(drafts) > 5:
         await update.message.reply_text(f"_...and {len(drafts) - 5} more drafts._",
@@ -862,7 +842,8 @@ def build_app(agent: Agent, scheduler=None) -> Application:
     app.add_handler(CommandHandler("reset_budget", cmd_reset_budget))
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CommandHandler("shell", cmd_shell))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(CommandHandler("approve_draft", cmd_approve_draft))
+    app.add_handler(CommandHandler("reject_draft", cmd_reject_draft))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
