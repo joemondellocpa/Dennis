@@ -234,6 +234,38 @@ class Memory:
     def get_behavior_config(self) -> dict:
         return self.get_facts_by_category("behavior")
 
+    # ── Trusted shell commands ──────────────────────────────────────────────
+    def add_trusted_shell(self, pattern: str, note: str = "") -> None:
+        """Add a command pattern to the trusted shell allowlist (prefix match)."""
+        self.set_fact(
+            "trusted_shell",
+            pattern,
+            note or f"trusted {datetime.now(timezone.utc).isoformat()[:10]}",
+        )
+
+    def remove_trusted_shell(self, pattern: str) -> bool:
+        """Remove a trusted shell pattern. Returns True if it existed."""
+        row = self._db.execute(
+            "SELECT id FROM facts WHERE category='trusted_shell' AND key=?", (pattern,)
+        ).fetchone()
+        if row:
+            self.delete_fact("trusted_shell", pattern)
+            return True
+        return False
+
+    def get_trusted_shell_patterns(self) -> dict:
+        """Return {pattern: note} for all trusted shell patterns."""
+        return self.get_facts_by_category("trusted_shell")
+
+    def is_trusted_shell(self, cmd: str) -> bool:
+        """Return True if cmd matches any trusted pattern (exact or prefix match)."""
+        patterns = self.get_trusted_shell_patterns()
+        cmd_stripped = cmd.strip()
+        for pattern in patterns:
+            if cmd_stripped == pattern or cmd_stripped.startswith(pattern + " "):
+                return True
+        return False
+
     # ── Goals ──────────────────────────────────────────────────────────────
     def create_goal(self, title: str, description: str, priority: int = 5,
                     schedule: str = None) -> str:

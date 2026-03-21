@@ -39,6 +39,12 @@ AUTONOMOUS_BLOCKED_TOOLS = {
 # Shell operator characters that make a command non-read-only
 _SHELL_OPERATORS = (";", "&&", "||", "|", ">", ">>", "<", "`", "$(", "&")
 
+# Binaries that have meaningful subcommands worth trusting as a pair
+_SUBCOMMAND_BINARIES = frozenset({
+    "git", "brew", "pip", "pip3", "npm", "docker", "systemctl",
+    "launchctl", "defaults", "diskutil", "osascript",
+})
+
 # Read-only shell commands that never need approval
 _READONLY_CMDS = frozenset({
     # filesystem / inspection
@@ -76,13 +82,13 @@ Your owner communicates with you via Telegram from their phone. You have access 
 - **Email & Calendar**: Read, draft, and send emails; manage calendar events.
 - **LinkedIn**: Research prospects, draft posts, and send connection requests (with user approval).
 - **GitHub**: Read and manage code repositories.
-- **Mac system**: Run shell commands on the Mac mini (requires explicit approval each time).
+- **Mac system**: Run shell commands on the Mac mini. Read-only commands run freely. Write/destructive commands require approval unless the pattern is on the trusted list. When asking approval, offer the "always" option to let the user add a blanket approval for that command type.
 
 ## Behavioral rules
 1. **Proactive**: Don't wait to be asked. If you notice something important (urgent email, upcoming meeting, new BD opportunity), flag it.
 2. **Memory-first**: Before answering any question, search your memory for relevant context. Store what you learn.
 3. **Goal-driven**: When given a goal, break it into tasks and work on them autonomously between conversations.
-4. **Approval before action**: ALWAYS ask for explicit approval before sending emails, posting to LinkedIn, sending connection requests, or running shell commands that modify system state.
+4. **Approval before action**: ALWAYS ask for explicit approval before sending emails, posting to LinkedIn, sending connection requests, or running shell commands that modify system state. For shell commands, always offer the "always" option so the user can grant blanket approval for that command type.
 5. **Concise by default**: Keep responses short unless detail is explicitly requested. Use bullet points.
 6. **Business focus**: Your owner runs a business. Prioritize tasks related to BD, outreach, LinkedIn, market research, and productivity.
 7. **Behavior updates**: When the owner asks you to change how you work (e.g. "focus on X", "be more concise"), use the update_behavior tool to persist that preference.
@@ -123,6 +129,17 @@ class Agent:
             active_goals=goals_str,
             behavior_section=behavior_section,
         )
+
+    @staticmethod
+    def _extract_trust_pattern(cmd: str) -> str:
+        """Return the most meaningful prefix to use as a trust pattern."""
+        words = cmd.strip().split()
+        if not words:
+            return cmd
+        first = words[0].split("/")[-1]
+        if len(words) >= 2 and first in _SUBCOMMAND_BINARIES:
+            return f"{first} {words[1]}"
+        return first
 
     def _is_readonly_shell(self, cmd: str) -> bool:
         """Return True only if a shell command is provably read-only (no operators, known safe cmd)."""
@@ -211,12 +228,17 @@ class Agent:
                 return None  # Safe read-only command, no approval needed
             if self._is_readonly_pipe(cmd):
                 return None  # Safe pipe of read-only commands, no approval needed
+            if self.memory.is_trusted_shell(cmd):
+                return None  # User previously granted blanket approval for this pattern
             risk_explanation = self._assess_shell_risk(cmd)
+            pattern = self._extract_trust_pattern(cmd)
             return (
                 f"⚠️ Shell command needs approval\n"
                 f"```\n{cmd}\n```\n"
                 f"**Risks:**\n{risk_explanation}\n\n"
-                f"Reply **yes** to confirm or **no** to cancel."
+                f"Reply **yes** (once), **always** (always allow `{pattern}` commands), "
+                f"or **no** to cancel.\n"
+                f"[trust_pattern:{pattern}]"
             )
         return (
             f"⚠️ Approval needed: **{tool_name}**\n"
@@ -310,9 +332,18 @@ class Agent:
                 approval_prompt = await self._needs_approval(tool_name, args)
                 if approval_prompt:
                     if approval_callback:
-                        approved = await approval_callback(approval_prompt)
+                        decision = await approval_callback(approval_prompt)
                     else:
-                        approved = False
+                        decision = "no"
+                    if decision == "always" and tool_name == "run_shell":
+                        import re as _re
+                        m = _re.search(r"\[trust_pattern:(.+?)\]", approval_prompt)
+                        pattern = m.group(1) if m else self._extract_trust_pattern(
+                            args.get("command", "")
+                        )
+                        self.memory.add_trusted_shell(pattern)
+                        logger.info(f"Trusted shell pattern added: '{pattern}'")
+                    approved = decision in ("yes", "always")
                     if not approved:
                         result = {"success": False, "error": "User declined this action."}
                         messages.append({

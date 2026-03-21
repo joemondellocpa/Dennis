@@ -106,10 +106,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if pending_key and pending_key in _pending_approvals:
         fut = _pending_approvals.pop(pending_key)
         context.user_data.pop("pending_approval_id", None)
-        approved = user_text.lower().strip() in ("yes", "y", "ok", "approve", "confirm", "go ahead")
+        token = user_text.lower().strip()
+        if token in ("always", "always allow", "trust", "remember", "always yes"):
+            decision = "always"
+            label = "✅ Approved (always allowed)"
+        elif token in ("yes", "y", "ok", "approve", "confirm", "go ahead"):
+            decision = "yes"
+            label = "✅ Approved"
+        else:
+            decision = "no"
+            label = "❌ Cancelled"
         if not fut.done():
-            fut.set_result(approved)
-        await update.message.reply_text("✅ Approved" if approved else "❌ Cancelled")
+            fut.set_result(decision)
+        await update.message.reply_text(label)
         return
 
     agent: Agent = context.bot_data["agent"]
@@ -125,14 +134,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         history = _histories[user_id]
 
-        async def approval_callback(prompt: str) -> bool:
+        async def approval_callback(prompt: str) -> str:
+            """Returns 'yes', 'always', or 'no'."""
             loop = asyncio.get_running_loop()
             fut: asyncio.Future = loop.create_future()
             approval_id = f"approval_{user_id}_{id(fut)}"
             _pending_approvals[approval_id] = fut
             context.user_data["pending_approval_id"] = approval_id
+            # Strip internal metadata marker before showing to user
+            import re as _re
+            display_prompt = _re.sub(r"\s*\[trust_pattern:[^\]]+\]", "", prompt)
             await update.effective_message.reply_text(
-                prompt + "\n\nReply **yes** to approve or **no** to cancel.",
+                display_prompt,
                 parse_mode=constants.ParseMode.MARKDOWN,
             )
             try:
@@ -141,7 +154,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 _pending_approvals.pop(approval_id, None)
                 context.user_data.pop("pending_approval_id", None)
                 await update.effective_message.reply_text("⏱ Approval timed out – action cancelled.")
-                return False
+                return "no"
 
         try:
             response = await agent.chat(user_text, history, approval_callback=approval_callback)
@@ -437,7 +450,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/clear – clear conversation history\n"
         "/reset_budget – reset today's API call counter\n"
         "/restart – restart the agent\n"
-        "/shell <cmd> – run a shell command directly\n\n"
+        "/shell <cmd> – run a shell command directly\n"
+        "/trusted – list trusted shell command patterns\n"
+        "/untrust <pattern> – remove a trusted pattern\n\n"
         "You can also send voice messages, PDFs, or images.",
         parse_mode=constants.ParseMode.MARKDOWN,
     )
@@ -780,6 +795,58 @@ async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed to run command: {e}")
 
 
+# ── Trusted shell commands ──────────────────────────────────────────────────
+
+async def cmd_trusted(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List trusted shell command patterns: /trusted"""
+    if not _is_allowed(update.effective_user.id):
+        return
+    agent: Agent = context.bot_data["agent"]
+    patterns = agent.memory.get_trusted_shell_patterns()
+    if not patterns:
+        await update.message.reply_text(
+            "No trusted shell patterns yet.\n\n"
+            "When Dennis asks for shell approval, reply **always** to add that command to the list.\n"
+            "Or say: _trust brew install_ / _always allow git commit_ in chat."
+        )
+        return
+    lines = ["**Trusted Shell Patterns** (run without approval):\n"]
+    for pattern, note in sorted(patterns.items()):
+        lines.append(f"• `{pattern}` — _{note}_")
+    lines.append("\nUse `/untrust <pattern>` to remove one.")
+    await _send_long(update, "\n".join(lines))
+
+
+async def cmd_untrust(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove a trusted shell pattern: /untrust <pattern>"""
+    if not _is_allowed(update.effective_user.id):
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: `/untrust <pattern>`\nExample: `/untrust brew install`",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return
+    agent: Agent = context.bot_data["agent"]
+    pattern = " ".join(context.args)
+    removed = agent.memory.remove_trusted_shell(pattern)
+    if removed:
+        await update.message.reply_text(
+            f"✅ Removed `{pattern}` from trusted list.",
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+    else:
+        patterns = agent.memory.get_trusted_shell_patterns()
+        if patterns:
+            opts = ", ".join(f"`{p}`" for p in sorted(patterns))
+            await update.message.reply_text(
+                f"Pattern `{pattern}` not found.\nTrusted patterns: {opts}",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+        else:
+            await update.message.reply_text("No trusted patterns to remove.")
+
+
 # ── Startup message ─────────────────────────────────────────────────────────
 
 async def _send_startup_message(app: Application) -> None:
@@ -843,6 +910,8 @@ def build_app(agent: Agent, scheduler=None) -> Application:
     app.add_handler(CommandHandler("reset_budget", cmd_reset_budget))
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CommandHandler("shell", cmd_shell))
+    app.add_handler(CommandHandler("trusted", cmd_trusted))
+    app.add_handler(CommandHandler("untrust", cmd_untrust))
     app.add_handler(CommandHandler("approve_draft", cmd_approve_draft))
     app.add_handler(CommandHandler("reject_draft", cmd_reject_draft))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
