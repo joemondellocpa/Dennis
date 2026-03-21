@@ -413,7 +413,7 @@ class Agent:
 
         # Guard 2: time-based loop detection – too many tasks created recently
         today_count = self.memory.get_task_count_today(goal["id"])
-        if today_count >= 6:
+        if today_count >= 20:
             logger.warning(
                 f"Goal '{goal['title']}' has {today_count} tasks created in the last 24h – "
                 "skipping planning to prevent runaway loop"
