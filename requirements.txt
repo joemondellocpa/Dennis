@@ -6,6 +6,7 @@ python-dotenv>=1.0.0
 
 # Memory
 chromadb>=0.5.0             # Vector store for semantic memory
+numpy<2                     # ChromaDB is incompatible with numpy 2.x
 sentence-transformers>=3.0.0 # Local embeddings (no API cost)
 
 # Tools: browser (full mode)
