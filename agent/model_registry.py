@@ -15,8 +15,7 @@ Provider summary:
     groq      – Remote. OpenAI-compatible. ~500 tok/s; best for low-latency.
     gemini    – Remote. OpenAI-compatible. 1M context; best for long documents.
     claude    – Remote. Anthropic SDK. Best writing quality (emails, posts).
-    mlx       – Local. OpenAI-compatible server. Fast on Apple Silicon.
-    ollama    – Local. Ollama generate API. Cross-platform fallback.
+    ollama    – Local. Ollama server. Cross-platform; works on Intel Macs.
 """
 import config
 from openai import AsyncOpenAI
@@ -85,17 +84,6 @@ def get_client(provider: str) -> tuple:
             config.CLAUDE_MODEL,
         )
 
-    if provider == "mlx":
-        _require_enabled("MLX", config.MLX_ENABLED, "MLX_ENABLED")
-        # MLX server exposes an OpenAI-compatible API on localhost
-        return (
-            AsyncOpenAI(
-                api_key="mlx",  # MLX server doesn't validate the key
-                base_url=f"{config.MLX_MODEL_URL}/v1",
-            ),
-            config.MLX_MODEL,
-        )
-
     if provider == "ollama":
         _require_enabled("Ollama", config.OLLAMA_ENABLED, "OLLAMA_ENABLED")
         # Ollama also exposes an OpenAI-compatible endpoint alongside /api/generate
@@ -111,6 +99,9 @@ def get_client(provider: str) -> tuple:
         f"Unknown provider: {provider!r}. "
         f"Valid options: {', '.join(_ALL_PROVIDERS)}"
     )
+
+
+
 
 
 def available_providers() -> list[str]:
@@ -133,9 +124,6 @@ def available_providers() -> list[str]:
     ):
         providers.append("claude")
 
-    if config.MLX_ENABLED:
-        providers.append("mlx")
-
     if config.OLLAMA_ENABLED:
         providers.append("ollama")
 
@@ -146,7 +134,7 @@ def available_providers() -> list[str]:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_ALL_PROVIDERS = ("deepseek", "groq", "gemini", "claude", "mlx", "ollama")
+_ALL_PROVIDERS = ("deepseek", "groq", "gemini", "claude", "ollama")
 
 
 def _require_enabled(name: str, flag: bool, env_var: str) -> None:

@@ -104,18 +104,6 @@ LOCAL_MODEL_URL = os.getenv("LOCAL_MODEL_URL", "http://localhost:11434")
 LOCAL_MODEL = os.getenv("LOCAL_MODEL", "deepseek-r1:8b")
 LOCAL_LLM_TIMEOUT = float(os.getenv("LOCAL_LLM_TIMEOUT", "30.0"))
 
-# ── Apple MLX (optional, faster local inference on Apple Silicon) ────────────
-# Faster than Ollama on Mac mini M-series – uses the Neural Engine natively.
-# Setup:
-#   pip install mlx-lm
-#   mlx_lm.server --model mlx-community/Llama-3.2-3B-Instruct-4bit --port 8080
-# Then set MLX_ENABLED=true in .env.
-# Validate first: python scripts/test_models.py
-# MLX takes priority over Ollama for local classification tasks when both enabled.
-MLX_ENABLED = os.getenv("MLX_ENABLED", "false").lower() == "true"
-MLX_MODEL_URL = os.getenv("MLX_MODEL_URL", "http://localhost:8080")
-MLX_MODEL = os.getenv("MLX_MODEL", "mlx-community/Llama-3.2-3B-Instruct-4bit")
-
 # ── Additional remote model providers ────────────────────────────────────────
 # All disabled by default. Enable one at a time, validate with:
 #   python scripts/test_models.py
