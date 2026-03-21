@@ -3,10 +3,8 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
-
-# ── Paths ──────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent
+load_dotenv(ROOT / ".env", override=True)
 DATA_DIR = ROOT / os.getenv("DATA_DIR", "data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 (DATA_DIR / "logs").mkdir(exist_ok=True)
