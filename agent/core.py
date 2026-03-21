@@ -402,9 +402,18 @@ class Agent:
 
     async def _plan_goal_tasks(self, goal: dict):
         """Ask DeepSeek to break a goal into concrete tasks using the create_goal_task tool."""
-        # Loop detection: if we've already created many tasks today, something is wrong
+        # Guard 1: don't pile on if tasks are already waiting to run
+        pending_tasks = self.memory.get_goal_tasks(goal["id"], status="pending")
+        if len(pending_tasks) >= 3:
+            logger.debug(
+                f"Goal '{goal['title']}' already has {len(pending_tasks)} pending tasks – "
+                "skipping planning until they're worked through"
+            )
+            return
+
+        # Guard 2: time-based loop detection – too many tasks created recently
         today_count = self.memory.get_task_count_today(goal["id"])
-        if today_count >= 8:
+        if today_count >= 6:
             logger.warning(
                 f"Goal '{goal['title']}' has {today_count} tasks created in the last 24h – "
                 "skipping planning to prevent runaway loop"

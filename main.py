@@ -7,6 +7,8 @@ Starts:
 3. The webhook server (if WEBHOOK_PORT > 0)
 """
 import asyncio
+import fcntl
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +16,28 @@ from loguru import logger
 from telegram import Bot
 
 import config
+
+# ── Single-instance lockfile ────────────────────────────────────────────────
+# Prevents two Dennis processes from polling Telegram simultaneously (409 error).
+# fcntl.flock is released automatically by the OS when the process exits, even
+# on crash or SIGKILL, so stale locks are never a problem.
+_LOCK_FILE = config.DATA_DIR / "dennis.lock"
+_lock_fh = None  # keep reference so the lock isn't GC'd
+
+
+def _acquire_instance_lock():
+    global _lock_fh
+    _lock_fh = open(_LOCK_FILE, "w")
+    try:
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        logger.error(
+            "Another Dennis instance is already running – exiting to avoid Telegram 409 conflict.\n"
+            f"If this is stale, delete {_LOCK_FILE} and restart."
+        )
+        sys.exit(1)
+    _lock_fh.write(str(os.getpid()))
+    _lock_fh.flush()
 from agent import Agent, Memory, local_llm
 from agent.scheduler import GoalScheduler
 from agent.notifier import SmartNotifier
@@ -32,6 +56,7 @@ logger.add(
 
 
 async def main():
+    _acquire_instance_lock()
     logger.info(f"Starting {config.AGENT_NAME}...")
     if config.LIGHTWEIGHT_MODE:
         logger.info("Running in LIGHTWEIGHT_MODE (Raspberry Pi / low-RAM device)")
