@@ -86,8 +86,11 @@ async def main():
                     text=message,
                     parse_mode=constants.ParseMode.MARKDOWN,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to notify user {user_id}: {e}")
+            except Exception:
+                try:
+                    await bot.send_message(chat_id=user_id, text=message)
+                except Exception as e:
+                    logger.warning(f"Failed to notify user {user_id}: {e}")
 
     # SmartNotifier enforces quiet hours and rate limiting
     notifier = SmartNotifier(memory=memory, raw_notify=_raw_notify)
