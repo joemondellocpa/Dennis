@@ -42,6 +42,11 @@ pydantic>=2.7.0
 rich>=13.7.0                # Pretty terminal logging
 loguru>=0.7.2
 
+# Optional: additional model providers
+# Install only what you need; validate with: python scripts/test_models.py
+# anthropic>=0.40.0      # Required if CLAUDE_ENABLED=true
+# mlx-lm>=0.19.0         # Required if MLX_ENABLED=true (Apple Silicon only)
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

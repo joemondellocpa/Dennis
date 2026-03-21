@@ -104,6 +104,42 @@ LOCAL_MODEL_URL = os.getenv("LOCAL_MODEL_URL", "http://localhost:11434")
 LOCAL_MODEL = os.getenv("LOCAL_MODEL", "deepseek-r1:8b")
 LOCAL_LLM_TIMEOUT = float(os.getenv("LOCAL_LLM_TIMEOUT", "30.0"))
 
+# ── Apple MLX (optional, faster local inference on Apple Silicon) ────────────
+# Faster than Ollama on Mac mini M-series – uses the Neural Engine natively.
+# Setup:
+#   pip install mlx-lm
+#   mlx_lm.server --model mlx-community/Llama-3.2-3B-Instruct-4bit --port 8080
+# Then set MLX_ENABLED=true in .env.
+# Validate first: python scripts/test_models.py
+# MLX takes priority over Ollama for local classification tasks when both enabled.
+MLX_ENABLED = os.getenv("MLX_ENABLED", "false").lower() == "true"
+MLX_MODEL_URL = os.getenv("MLX_MODEL_URL", "http://localhost:8080")
+MLX_MODEL = os.getenv("MLX_MODEL", "mlx-community/Llama-3.2-3B-Instruct-4bit")
+
+# ── Additional remote model providers ────────────────────────────────────────
+# All disabled by default. Enable one at a time, validate with:
+#   python scripts/test_models.py
+# before setting *_ENABLED=true in production.
+
+# Groq – OpenAI-compatible, ~500 tok/s. Best for low-latency interactive tasks.
+# Get API key: https://console.groq.com/
+GROQ_ENABLED = os.getenv("GROQ_ENABLED", "false").lower() == "true"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Gemini Flash – OpenAI-compatible, 1M token context. Best for long documents.
+# Get API key: https://aistudio.google.com/apikey
+GEMINI_ENABLED = os.getenv("GEMINI_ENABLED", "false").lower() == "true"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+
+# Claude – Anthropic SDK (not OpenAI-compatible). Best for writing quality.
+# Requires: pip install anthropic
+# Get API key: https://console.anthropic.com/
+CLAUDE_ENABLED = os.getenv("CLAUDE_ENABLED", "false").lower() == "true"
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+
 # ── Storage paths ──────────────────────────────────────────────────────────
 MEMORY_DB_PATH = str(DATA_DIR / "memory.db")
 CHROMA_DB_PATH = str(DATA_DIR / "chroma_db")
