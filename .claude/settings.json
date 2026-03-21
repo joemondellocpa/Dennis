@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Review the user's request below and determine if it involves 3 or more distinct steps, touches multiple files, or is likely to require many tool calls (e.g. codebase search + edits + tests).\n\nIf YES: output a JSON object with hookSpecificOutput.additionalContext set to a message instructing Claude to decompose this into subagents — one per independent sub-task — and launch them in parallel to stay within the per-turn tool call limit.\n\nIf NO: output {\"hookSpecificOutput\": {\"hookEventName\": \"UserPromptSubmit\", \"additionalContext\": \"\"}} (empty string, no instruction needed).\n\nAlways return valid JSON in this shape:\n{\n  \"hookSpecificOutput\": {\n    \"hookEventName\": \"UserPromptSubmit\",\n    \"additionalContext\": \"<your message or empty string>\"\n  }\n}\n\nUser request: $ARGUMENTS",
+            "statusMessage": "Planning task scope..."
+          }
+        ]
+      }
+    ]
+  }
+}
