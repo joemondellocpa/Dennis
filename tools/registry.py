@@ -132,6 +132,129 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "drive_list_files",
+            "description": "List files in Google Drive. Supports Drive search syntax (e.g. \"name contains 'report'\", \"mimeType='application/vnd.google-apps.spreadsheet'\").",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Drive search query. Leave empty to list recent files."},
+                    "max_results": {"type": "integer", "description": "Max files to return (default 20)"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_read_file",
+            "description": "Download and read the text content of a Google Drive file. Google Docs are exported as plain text, Sheets as CSV.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string", "description": "Google Drive file ID"},
+                },
+                "required": ["file_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_upload_file",
+            "description": "Upload a text file to Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "File name (including extension)"},
+                    "content": {"type": "string", "description": "Text content to upload"},
+                    "parent_folder_id": {"type": "string", "description": "Optional Drive folder ID to upload into"},
+                    "mime_type": {"type": "string", "description": "MIME type (default: text/plain)"},
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "drive_create_folder",
+            "description": "Create a folder in Google Drive.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Folder name"},
+                    "parent_folder_id": {"type": "string", "description": "Optional parent folder ID"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_create",
+            "description": "Create a new Google Spreadsheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Spreadsheet title"},
+                    "sheets": {"type": "array", "items": {"type": "string"}, "description": "Optional list of sheet/tab names to create"},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_read",
+            "description": "Read values from a Google Sheet range.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "Spreadsheet ID"},
+                    "range_": {"type": "string", "description": "A1 notation range (e.g. 'Sheet1!A1:D10'). Defaults to 'Sheet1'."},
+                },
+                "required": ["spreadsheet_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_write",
+            "description": "Write values to a Google Sheet, overwriting the specified range.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "Spreadsheet ID"},
+                    "range_": {"type": "string", "description": "A1 notation range (e.g. 'Sheet1!A1')"},
+                    "values": {"type": "array", "items": {"type": "array"}, "description": "2D array of values (rows × columns)"},
+                },
+                "required": ["spreadsheet_id", "range_", "values"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sheets_append",
+            "description": "Append rows to the end of a Google Sheet.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spreadsheet_id": {"type": "string", "description": "Spreadsheet ID"},
+                    "range_": {"type": "string", "description": "Sheet name or range to append after (e.g. 'Sheet1')"},
+                    "values": {"type": "array", "items": {"type": "array"}, "description": "2D array of rows to append"},
+                },
+                "required": ["spreadsheet_id", "range_", "values"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_repos",
             "description": "List your GitHub repositories.",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -410,12 +533,23 @@ async def dispatch_tool(name: str, args: dict, memory=None) -> Any:
         # Browser
         "web_search": lambda: browser.web_search(**args),
         "fetch_page": lambda: browser.fetch_page(**args),
-        # Google
+        # Google - Gmail
         "list_emails": lambda: google_tool.list_emails(**args),
         "get_email_body": lambda: google_tool.get_email_body(**args),
         "send_email": lambda: google_tool.send_email(**args),
+        # Google - Calendar
         "list_calendar_events": lambda: google_tool.list_calendar_events(**args),
         "create_calendar_event": lambda: google_tool.create_calendar_event(**args),
+        # Google - Drive
+        "drive_list_files": lambda: google_tool.drive_list_files(**args),
+        "drive_read_file": lambda: google_tool.drive_read_file(**args),
+        "drive_upload_file": lambda: google_tool.drive_upload_file(**args),
+        "drive_create_folder": lambda: google_tool.drive_create_folder(**args),
+        # Google - Sheets
+        "sheets_create": lambda: google_tool.sheets_create(**args),
+        "sheets_read": lambda: google_tool.sheets_read(**args),
+        "sheets_write": lambda: google_tool.sheets_write(**args),
+        "sheets_append": lambda: google_tool.sheets_append(**args),
         # GitHub
         "list_repos": lambda: github_tool.list_repos(),
         "get_repo_info": lambda: github_tool.get_repo_info(**args),

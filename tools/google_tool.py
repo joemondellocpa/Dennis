@@ -52,6 +52,16 @@ def _calendar_service():
     return build("calendar", "v3", credentials=_get_credentials())
 
 
+def _drive_service():
+    from googleapiclient.discovery import build
+    return build("drive", "v3", credentials=_get_credentials())
+
+
+def _sheets_service():
+    from googleapiclient.discovery import build
+    return build("sheets", "v4", credentials=_get_credentials())
+
+
 # ── Email ──────────────────────────────────────────────────────────────────
 
 async def list_emails(max_results: int = 10, query: str = "is:unread") -> dict:
@@ -156,6 +166,158 @@ async def list_calendar_events(max_results: int = 10, days_ahead: int = 7) -> di
 
     try:
         return await asyncio.to_thread(_fetch)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Google Drive ───────────────────────────────────────────────────────────
+
+async def drive_list_files(query: str = "", max_results: int = 20) -> dict:
+    """List files in Google Drive. Supports Drive search syntax."""
+    def _fetch():
+        service = _drive_service()
+        q = query if query else "trashed = false"
+        results = service.files().list(
+            q=q,
+            pageSize=max_results,
+            fields="files(id, name, mimeType, modifiedTime, size, webViewLink)",
+            orderBy="modifiedTime desc",
+        ).execute()
+        return {"success": True, "files": results.get("files", [])}
+
+    try:
+        return await asyncio.to_thread(_fetch)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def drive_read_file(file_id: str) -> dict:
+    """Download and return the text content of a Drive file (Docs exported as plain text, or raw for text files)."""
+    def _fetch():
+        service = _drive_service()
+        meta = service.files().get(fileId=file_id, fields="mimeType, name").execute()
+        mime = meta.get("mimeType", "")
+
+        if mime == "application/vnd.google-apps.document":
+            content = service.files().export(fileId=file_id, mimeType="text/plain").execute()
+        elif mime == "application/vnd.google-apps.spreadsheet":
+            content = service.files().export(fileId=file_id, mimeType="text/csv").execute()
+        else:
+            content = service.files().get_media(fileId=file_id).execute()
+
+        if isinstance(content, bytes):
+            text = content.decode("utf-8", errors="replace")
+        else:
+            text = str(content)
+
+        return {"success": True, "name": meta.get("name"), "content": text[:10000]}
+
+    try:
+        return await asyncio.to_thread(_fetch)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def drive_upload_file(name: str, content: str, parent_folder_id: str = "", mime_type: str = "text/plain") -> dict:
+    """Upload a text file to Google Drive."""
+    def _upload():
+        from googleapiclient.http import MediaInMemoryUpload
+        service = _drive_service()
+        metadata = {"name": name}
+        if parent_folder_id:
+            metadata["parents"] = [parent_folder_id]
+        media = MediaInMemoryUpload(content.encode("utf-8"), mimetype=mime_type)
+        result = service.files().create(
+            body=metadata, media_body=media,
+            fields="id, name, webViewLink"
+        ).execute()
+        return {"success": True, "file_id": result["id"], "name": result["name"], "link": result.get("webViewLink")}
+
+    try:
+        return await asyncio.to_thread(_upload)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def drive_create_folder(name: str, parent_folder_id: str = "") -> dict:
+    """Create a folder in Google Drive."""
+    def _create():
+        service = _drive_service()
+        metadata = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+        if parent_folder_id:
+            metadata["parents"] = [parent_folder_id]
+        result = service.files().create(body=metadata, fields="id, name, webViewLink").execute()
+        return {"success": True, "folder_id": result["id"], "name": result["name"], "link": result.get("webViewLink")}
+
+    try:
+        return await asyncio.to_thread(_create)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Google Sheets ──────────────────────────────────────────────────────────
+
+async def sheets_create(title: str, sheets: list[str] = None) -> dict:
+    """Create a new Google Spreadsheet."""
+    def _create():
+        service = _sheets_service()
+        body = {"properties": {"title": title}}
+        if sheets:
+            body["sheets"] = [{"properties": {"title": s}} for s in sheets]
+        result = service.spreadsheets().create(body=body, fields="spreadsheetId,spreadsheetUrl").execute()
+        return {"success": True, "spreadsheet_id": result["spreadsheetId"], "url": result["spreadsheetUrl"]}
+
+    try:
+        return await asyncio.to_thread(_create)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def sheets_read(spreadsheet_id: str, range_: str = "Sheet1") -> dict:
+    """Read values from a Google Sheet range (e.g. 'Sheet1!A1:D10')."""
+    def _fetch():
+        service = _sheets_service()
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=range_
+        ).execute()
+        return {"success": True, "values": result.get("values", [])}
+
+    try:
+        return await asyncio.to_thread(_fetch)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def sheets_write(spreadsheet_id: str, range_: str, values: list[list]) -> dict:
+    """Write values to a Google Sheet. values is a 2D list (rows × columns)."""
+    def _write():
+        service = _sheets_service()
+        body = {"values": values}
+        result = service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=range_,
+            valueInputOption="USER_ENTERED", body=body
+        ).execute()
+        return {"success": True, "updated_cells": result.get("updatedCells")}
+
+    try:
+        return await asyncio.to_thread(_write)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def sheets_append(spreadsheet_id: str, range_: str, values: list[list]) -> dict:
+    """Append rows to a Google Sheet."""
+    def _append():
+        service = _sheets_service()
+        body = {"values": values}
+        result = service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id, range=range_,
+            valueInputOption="USER_ENTERED", insertDataOption="INSERT_ROWS", body=body
+        ).execute()
+        return {"success": True, "updated_cells": result.get("updates", {}).get("updatedCells")}
+
+    try:
+        return await asyncio.to_thread(_append)
     except Exception as e:
         return {"success": False, "error": str(e)}
 
