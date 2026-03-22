@@ -293,8 +293,9 @@ class Agent:
 
         tool_call_count = 0
         final_response = ""
+        _SAFETY_CAP = 500  # absolute runaway guard; never shown to user
 
-        while tool_call_count < config.CHAT_MAX_TOOL_CALLS_PER_TURN:
+        while True:
             # Budget guard
             if config.DAILY_API_CALL_BUDGET > 0:
                 used = self.memory.get_api_calls_today()
@@ -304,6 +305,10 @@ class Agent:
                         f"⚠️ Daily API call budget ({config.DAILY_API_CALL_BUDGET}) reached. "
                         "I'll resume tomorrow, or you can raise DAILY_API_CALL_BUDGET in settings."
                     )
+
+            if tool_call_count >= _SAFETY_CAP:
+                logger.error(f"Safety cap of {_SAFETY_CAP} tool calls reached — aborting to prevent runaway loop")
+                break
 
             response = await self.client.chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
@@ -364,9 +369,6 @@ class Agent:
                     "content": json.dumps(self._truncate_tool_result(result)),
                 })
                 tool_call_count += 1
-
-        else:
-            final_response = "I've reached the tool call limit for this turn. Ask me to continue if needed."
 
         # Store exchange in memory
         self.memory.save_conversation_turn("user", user_message)
