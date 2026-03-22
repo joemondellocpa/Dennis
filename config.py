@@ -46,6 +46,10 @@ AGENT_NAME = os.getenv("AGENT_NAME", "Dennis")
 AGENT_TIMEZONE = os.getenv("AGENT_TIMEZONE", "America/New_York")
 AUTONOMOUS_LOOP_INTERVAL = int(os.getenv("AUTONOMOUS_LOOP_INTERVAL", "300"))
 MAX_TOOL_CALLS_PER_TURN = int(os.getenv("MAX_TOOL_CALLS_PER_TURN", "10"))
+# Interactive chat gets a higher tool-call ceiling so complex user requests
+# (e.g. "clean up Google Drive duplicates") can complete in one turn.
+# Autonomous background tasks still use MAX_TOOL_CALLS_PER_TURN to limit budget.
+CHAT_MAX_TOOL_CALLS_PER_TURN = int(os.getenv("CHAT_MAX_TOOL_CALLS_PER_TURN", "50"))
 MAX_HISTORY_TURNS = int(os.getenv("MAX_HISTORY_TURNS", "20"))
 MEMORY_MAX_RESULTS = int(os.getenv("MEMORY_MAX_RESULTS", "10"))
 

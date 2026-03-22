@@ -294,7 +294,7 @@ class Agent:
         tool_call_count = 0
         final_response = ""
 
-        while tool_call_count < config.MAX_TOOL_CALLS_PER_TURN:
+        while tool_call_count < config.CHAT_MAX_TOOL_CALLS_PER_TURN:
             # Budget guard
             if config.DAILY_API_CALL_BUDGET > 0:
                 used = self.memory.get_api_calls_today()
