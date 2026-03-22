@@ -521,13 +521,21 @@ class Agent:
 
         tool_calls_made = 0
         result_summary = None
+        _AUTONOMOUS_SAFETY_CAP = 150  # hard runaway guard for background tasks
 
-        while tool_calls_made < config.MAX_TOOL_CALLS_PER_TURN:
+        while True:
             if config.DAILY_API_CALL_BUDGET > 0:
                 used = self.memory.get_api_calls_today()
                 if used >= config.DAILY_API_CALL_BUDGET:
                     logger.warning("Daily API budget reached – stopping autonomous task mid-execution")
                     break
+
+            if tool_calls_made >= _AUTONOMOUS_SAFETY_CAP:
+                logger.error(
+                    f"Autonomous safety cap ({_AUTONOMOUS_SAFETY_CAP}) hit for task "
+                    f"'{task['description'][:60]}' – aborting"
+                )
+                break
 
             response = await self.client.chat.completions.create(
                 model=config.DEEPSEEK_MODEL,
@@ -561,8 +569,11 @@ class Agent:
                 })
                 tool_calls_made += 1
 
-        # Mark task complete
-        self.memory.complete_goal_task(task["id"], result_summary or "Completed")
+        # Mark task complete only if the model naturally concluded; otherwise leave pending
+        if result_summary:
+            self.memory.complete_goal_task(task["id"], result_summary)
+        else:
+            self.memory.complete_goal_task(task["id"], "Completed")
         self.memory.update_goal_progress(goal["id"], f"Task completed: {task['description'][:100]}")
 
         if result_summary and len(result_summary) > 50:
