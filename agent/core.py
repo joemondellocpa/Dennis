@@ -387,18 +387,31 @@ class Agent:
         if not goals:
             return
 
+        # Separate goals that need planning from those ready to execute
+        to_plan = []
+        to_execute = []
         for goal in goals:
             pending_tasks = self.memory.get_goal_tasks(goal["id"], status="pending")
             if not pending_tasks:
-                await self._plan_goal_tasks(goal)
-                continue
+                to_plan.append(goal)
+            else:
+                to_execute.append((goal, pending_tasks[0]))
 
-            task = pending_tasks[0]
-            result = await self._execute_goal_task(goal, task)
+        # Plan goals that have no pending tasks (sequential, low cost)
+        for goal in to_plan:
+            await self._plan_goal_tasks(goal)
 
-            if result and notify_fn:
-                await notify_fn(result)
-            break  # One goal per tick
+        # Execute all ready tasks concurrently — each gets its own tool call budget
+        if to_execute:
+            results = await asyncio.gather(
+                *[self._execute_goal_task(goal, task) for goal, task in to_execute],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Autonomous task error: {result}")
+                elif result and notify_fn:
+                    await notify_fn(result)
 
     async def _plan_goal_tasks(self, goal: dict):
         """Ask DeepSeek to break a goal into concrete tasks using the create_goal_task tool."""
@@ -507,7 +520,7 @@ class Agent:
         tool_calls_made = 0
         result_summary = None
 
-        while tool_calls_made < 5:
+        while tool_calls_made < config.MAX_TOOL_CALLS_PER_TURN:
             if config.DAILY_API_CALL_BUDGET > 0:
                 used = self.memory.get_api_calls_today()
                 if used >= config.DAILY_API_CALL_BUDGET:
