@@ -725,9 +725,23 @@ async def cmd_reset_budget(update: Update, context: ContextTypes.DEFAULT_TYPE):
     before = agent.memory.get_api_calls_today()
     agent.memory.reset_api_calls_today()
     budget = config.DAILY_API_CALL_BUDGET
+
+    # Pause the scheduler so background tasks don't immediately re-consume the budget
+    scheduler = context.bot_data.get("scheduler")
+    paused_scheduler = False
+    if scheduler and not scheduler.is_paused:
+        scheduler.pause()
+        paused_scheduler = True
+
+    pause_note = (
+        "\n⏸ Background tasks paused so they don't re-hit the limit. Use /resume when ready."
+        if paused_scheduler
+        else ""
+    )
     await update.message.reply_text(
         f"✅ Budget reset. Cleared {before} calls recorded today.\n"
         f"Current limit: {budget if budget > 0 else 'unlimited'} calls/day."
+        f"{pause_note}"
     )
 
 
