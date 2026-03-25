@@ -293,7 +293,7 @@ class Agent:
 
         tool_call_count = 0
         final_response = ""
-        _SAFETY_CAP = 500  # absolute runaway guard; never shown to user
+        _SAFETY_CAP = config.CHAT_MAX_TOOL_CALLS_PER_TURN  # configurable via CHAT_MAX_TOOL_CALLS_PER_TURN env var
 
         while True:
             # Budget guard
@@ -521,7 +521,7 @@ class Agent:
 
         tool_calls_made = 0
         result_summary = None
-        _AUTONOMOUS_SAFETY_CAP = 150  # hard runaway guard for background tasks
+        _AUTONOMOUS_SAFETY_CAP = config.MAX_TOOL_CALLS_PER_TURN  # configurable via MAX_TOOL_CALLS_PER_TURN env var
 
         while True:
             if config.DAILY_API_CALL_BUDGET > 0:
@@ -570,10 +570,13 @@ class Agent:
                 tool_calls_made += 1
 
         # Mark task complete only if the model naturally concluded; otherwise leave pending
+        # so the scheduler can retry it in the next autonomous cycle.
         if result_summary:
             self.memory.complete_goal_task(task["id"], result_summary)
         else:
-            self.memory.complete_goal_task(task["id"], "Completed")
+            logger.warning(
+                f"Task '{task['description'][:60]}' hit safety cap or budget limit — leaving pending for retry"
+            )
         self.memory.update_goal_progress(goal["id"], f"Task completed: {task['description'][:100]}")
 
         if result_summary and len(result_summary) > 50:

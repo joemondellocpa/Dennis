@@ -750,7 +750,14 @@ async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("🔄 Restarting Dennis…")
     logger.info("Restart requested via Telegram")
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    # Schedule exec after a short delay so the reply is delivered and the
+    # Telegram polling loop has a chance to advance the update offset.
+    # Without this, os.execv fires mid-loop and the /restart message is
+    # replayed on startup, causing an infinite restart loop.
+    async def _do_restart():
+        await asyncio.sleep(2)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    asyncio.ensure_future(_do_restart())
 
 
 async def cmd_shell(update: Update, context: ContextTypes.DEFAULT_TYPE):
