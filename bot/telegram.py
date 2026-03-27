@@ -58,6 +58,11 @@ def _trim_history(user_id: int):
         _histories[user_id] = h[-(config.MAX_HISTORY_TURNS * 2):]
 
 
+def _escape_md(text: str) -> str:
+    """Escape Telegram legacy Markdown special chars in dynamic content."""
+    return text.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+
+
 async def _send_long(update: Update, text: str):
     chunk_size = 4000
     for i in range(0, len(text), chunk_size):
@@ -896,8 +901,8 @@ async def _send_startup_message(app: Application) -> None:
             last_note = notes[-1]["note"] if notes else "No updates yet"
             pending = agent.memory.get_goal_tasks(g["id"], status="pending")
             lines.append(
-                f"• *{g['title']}* (priority {g['priority']})\n"
-                f"  _{last_note[:100]}_\n"
+                f"• *{_escape_md(g['title'])}* (priority {g['priority']})\n"
+                f"  _{_escape_md(last_note[:100])}_\n"
                 f"  Pending tasks: {len(pending)}"
             )
 
@@ -906,7 +911,12 @@ async def _send_startup_message(app: Application) -> None:
         try:
             await app.bot.send_message(uid, msg, parse_mode=constants.ParseMode.MARKDOWN)
         except Exception:
-            logger.warning(f"Could not send startup message to user {uid}")
+            try:
+                # Strip markdown and retry as plain text
+                plain = msg.replace("*", "").replace("_", "").replace("`", "").replace("\\", "")
+                await app.bot.send_message(uid, plain)
+            except Exception as e:
+                logger.warning(f"Could not send startup message to user {uid}: {e}")
 
 
 # ── App builder ────────────────────────────────────────────────────────────
