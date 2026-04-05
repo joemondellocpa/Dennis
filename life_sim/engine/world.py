@@ -124,12 +124,14 @@ class WorldGenerator:
     WATER_POOL_COUNT = 40   # number of water pools to scatter
     WATER_POOL_RADIUS = 3   # radius of each water pool (in cells)
     OUTCROP_COUNT = 30      # number of stone outcroppings
+    WOOD_PATCH_COUNT = 200  # food plants scattered on soil surface
 
     def generate_default(self, world: World):
         """Generate terrain for the entire world."""
         self._fill_layers(world)
         self._add_water_pools(world)
         self._add_stone_outcroppings(world)
+        self._add_wood_patches(world)
 
     # ------------------------------------------------------------------
     # Layer filling
@@ -188,6 +190,33 @@ class WorldGenerator:
                         y = cy_center + dy
                         if world.get_cell(x, y, surface_z) == int(CellType.AIR):
                             world.set_cell(x, y, surface_z, int(CellType.WATER))
+
+    # ------------------------------------------------------------------
+    # Wood patches (surface food)
+    # ------------------------------------------------------------------
+
+    def _add_wood_patches(self, world: World):
+        """Scatter WOOD columns on the soil surface as accessible food for organisms.
+
+        WOOD (calorie_value=10) is placed at z = surface_z + 1, where
+        organisms spawn and roam, giving them food they can eat without digging.
+        """
+        for _ in range(self.WOOD_PATCH_COUNT):
+            px = random.randint(0, WORLD_W - 1)
+            py = random.randint(0, WORLD_H - 1)
+            # Find surface: highest non-AIR z
+            surface_z = None
+            for sz in range(WORLD_D - 1, -1, -1):
+                if world.get_cell(px, py, sz) != int(CellType.AIR):
+                    surface_z = sz
+                    break
+            if surface_z is None:
+                continue
+            patch_height = random.randint(1, 3)
+            for dz in range(patch_height):
+                z = surface_z + 1 + dz
+                if z < WORLD_D and world.get_cell(px, py, z) == int(CellType.AIR):
+                    world.set_cell(px, py, z, int(CellType.WOOD))
 
     # ------------------------------------------------------------------
     # Stone outcroppings

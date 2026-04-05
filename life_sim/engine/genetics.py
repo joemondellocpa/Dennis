@@ -238,8 +238,10 @@ class BodyPlan:
         self.calorie_capacity: float = float(total * 20)
 
         # calorie_cost_per_tick: baseline energy burn.
+        # Floor of 0.02 per cell ensures even zero-metabolism organisms have some cost;
+        # variance (0.08 range) preserves natural selection pressure on metabolism.
         metabolism_rate_norm = genome.phenotype('metabolism_rate')
-        self.calorie_cost_per_tick: float = total * metabolism_rate_norm * 0.5
+        self.calorie_cost_per_tick: float = total * (0.02 + metabolism_rate_norm * 0.08)
 
         # Respiratory type
         self.has_lung: bool = genome.get_dominant_allele('lung_ratio') > 128

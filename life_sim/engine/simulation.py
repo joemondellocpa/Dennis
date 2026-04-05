@@ -41,7 +41,7 @@ class Simulation:
             genome = Genome.random_genome()
             org = Organism(genome, x, y, z + 1, species_id=self.species_counter)
             self.species_counter += 1
-            org.state.calories = org.body.calorie_capacity * 0.7
+            org.state.calories = org.body.calorie_capacity * 0.9
             self.pool.add(org)
 
     def _find_surface_z(self, x, y) -> int | None:
@@ -126,6 +126,11 @@ class Simulation:
         if not state.in_water and body.has_gill:
             state.calories -= body.calorie_cost_per_tick * 1.5
 
+        # Unconditional eat attempt every 3 ticks — baseline survival independent
+        # of which behavior slots the organism rolled in its genome.
+        if self.tick_count % 3 == 0:
+            self._try_eat(org)
+
         # Build world context for behavior evaluator
         ctx = self._build_world_context(org)
 
@@ -186,8 +191,8 @@ class Simulation:
         # Food = SOIL (calorie_value > 0), WOOD
         scan_r = min(vision, 20)
         for dz in range(-2, 3):
-            for dy in range(-scan_r, scan_r + 1, max(1, scan_r // 5)):
-                for dx in range(-scan_r, scan_r + 1, max(1, scan_r // 5)):
+            for dy in range(-scan_r, scan_r + 1, max(1, scan_r // 10)):
+                for dx in range(-scan_r, scan_r + 1, max(1, scan_r // 10)):
                     nx, ny, nz = state.x + dx, state.y + dy, state.z + dz
                     if not self.world.in_bounds(nx, ny, nz):
                         continue
