@@ -1,0 +1,15 @@
+{
+  "id": "seek_food_hungry",
+  "name": "Seek Food When Hungry",
+  "priority": 60,
+  "condition": {
+    "type": "calories_below",
+    "param": 0.5
+  },
+  "action": {
+    "type": "approach",
+    "speed_multiplier": 1.0,
+    "calorie_multiplier": 1.0,
+    "param": 0
+  }
+}

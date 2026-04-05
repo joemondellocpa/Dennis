@@ -1,0 +1,15 @@
+{
+  "id": "surface_if_drowning",
+  "name": "Surface If Drowning",
+  "priority": 100,
+  "condition": {
+    "type": "in_wrong_medium",
+    "param": 0
+  },
+  "action": {
+    "type": "surface",
+    "speed_multiplier": 2.0,
+    "calorie_multiplier": 2.0,
+    "param": 0
+  }
+}

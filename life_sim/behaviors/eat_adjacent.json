@@ -1,0 +1,15 @@
+{
+  "id": "eat_adjacent",
+  "name": "Eat Adjacent Food",
+  "priority": 90,
+  "condition": {
+    "type": "food_nearby",
+    "param": 1
+  },
+  "action": {
+    "type": "eat",
+    "speed_multiplier": 0.0,
+    "calorie_multiplier": 0.5,
+    "param": 0
+  }
+}

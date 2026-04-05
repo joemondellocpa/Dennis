@@ -1,0 +1,15 @@
+{
+  "id": "dive_if_drying",
+  "name": "Dive If Drying Out",
+  "priority": 100,
+  "condition": {
+    "type": "in_wrong_medium",
+    "param": 0
+  },
+  "action": {
+    "type": "dive",
+    "speed_multiplier": 2.0,
+    "calorie_multiplier": 2.0,
+    "param": 0
+  }
+}

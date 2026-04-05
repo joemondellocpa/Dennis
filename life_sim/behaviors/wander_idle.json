@@ -1,0 +1,15 @@
+{
+  "id": "wander_idle",
+  "name": "Wander Idly",
+  "priority": 0,
+  "condition": {
+    "type": "always",
+    "param": 0
+  },
+  "action": {
+    "type": "wander",
+    "speed_multiplier": 0.5,
+    "calorie_multiplier": 0.8,
+    "param": 0
+  }
+}

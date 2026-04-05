@@ -1,0 +1,15 @@
+{
+  "id": "dig_for_food",
+  "name": "Dig for Subsurface Food",
+  "priority": 55,
+  "condition": {
+    "type": "calories_below",
+    "param": 0.5
+  },
+  "action": {
+    "type": "dig",
+    "speed_multiplier": 0.3,
+    "calorie_multiplier": 1.5,
+    "param": 5
+  }
+}

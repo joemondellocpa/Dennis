@@ -1,0 +1,15 @@
+{
+  "id": "flee_threat",
+  "name": "Flee from Threat",
+  "priority": 95,
+  "condition": {
+    "type": "threat_nearby",
+    "param": 200
+  },
+  "action": {
+    "type": "flee",
+    "speed_multiplier": 2.0,
+    "calorie_multiplier": 2.5,
+    "param": 0
+  }
+}
