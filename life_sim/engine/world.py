@@ -131,14 +131,32 @@ class WorldGenerator:
     GROVE_COUNT = 4        # dense tree groves on the surface
     GROVE_RADIUS = 12      # cells radius per grove
 
+    # Biome block size in chunks (4 chunks = 64 world cells per biome zone)
+    BIOME_BLOCK = 4
+
     def generate_default(self, world: World):
         """Generate terrain for the entire world."""
+        self._biome_map = self._generate_biome_map()
         self._fill_layers(world)
         self._add_water_pools(world)
         self._add_stone_outcroppings(world)
         self._add_lakes(world)
         self._add_rivers(world)
         self._add_groves(world)
+
+    def _generate_biome_map(self) -> np.ndarray:
+        """Generate a coarse biome grid (one type per BIOME_BLOCK x BIOME_BLOCK chunks).
+
+        Biome types:
+          0 = rocky     : exposed stone with sparse soil pockets
+          1 = grassy    : soil-dominant, the "grass" biome (~25% of surface)
+          2 = sand_dune : 90% sand with soil inclusions — rewards digger evolution
+          3 = barren    : mixed stone/sand/soil wasteland
+        """
+        bw = (CHUNKS_W + self.BIOME_BLOCK - 1) // self.BIOME_BLOCK
+        bh = (CHUNKS_H + self.BIOME_BLOCK - 1) // self.BIOME_BLOCK
+        # Probabilities: rocky 30%, grassy 25%, sand_dune 25%, barren 20%
+        return np.random.choice(4, size=(bw, bh), p=[0.30, 0.25, 0.25, 0.20])
 
     # ------------------------------------------------------------------
     # Layer filling
@@ -153,15 +171,23 @@ class WorldGenerator:
             for cx in range(CHUNKS_W):
                 for cy in range(CHUNKS_H):
                     chunk = world.get_chunk(cx, cy, cz)
-                    self._fill_chunk_layers(chunk, z_base)
+                    self._fill_chunk_layers(chunk, z_base, cx, cy)
 
-    def _fill_chunk_layers(self, chunk: Chunk, z_base: int):
-        """Fill a single chunk according to layer rules."""
+    def _fill_chunk_layers(self, chunk: Chunk, z_base: int, cx: int = 0, cy: int = 0):
+        """Fill a single chunk according to layer rules.
+
+        cx/cy are the chunk grid coordinates; used to look up the surface biome.
+        """
         cells = chunk.cells  # shape (16,16,16), axis order: x, y, z
         _STONE = int(CellType.STONE)
         _SAND  = int(CellType.SAND)
         _SOIL  = int(CellType.SOIL)
         _WOOD  = int(CellType.WOOD)
+
+        # Look up biome for this chunk's position
+        bx = min(cx // self.BIOME_BLOCK, self._biome_map.shape[0] - 1)
+        by = min(cy // self.BIOME_BLOCK, self._biome_map.shape[1] - 1)
+        biome = int(self._biome_map[bx, by])
 
         for lz in range(CHUNK_SIZE):
             z = z_base + lz
@@ -179,9 +205,32 @@ class WorldGenerator:
                 layer[(r >= 0.94) & (r < 0.99)] = _SOIL
                 layer[r >= 0.99]              = _WOOD
                 cells[:, :, lz] = layer
+            elif z == self.SOIL_TOP - 1:
+                # z=19: sub-surface layer — mostly soil, biome influences composition
+                r = np.random.random((CHUNK_SIZE, CHUNK_SIZE))
+                layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SOIL, dtype=np.uint8)
+                layer[r < 0.25] = _STONE
+                if biome == 2:  # sand_dune biome has sandy subsurface too
+                    layer[(r >= 0.50) & (r < 0.80)] = _SAND
+                cells[:, :, lz] = layer
             else:
-                # z 19..20: thin topsoil (2 layers)
-                cells[:, :, lz] = _SOIL
+                # z=20: walking surface — biome-based variety
+                # 0=rocky  1=grassy  2=sand_dune  3=barren
+                r = np.random.random((CHUNK_SIZE, CHUNK_SIZE))
+                if biome == 0:   # rocky: mostly exposed stone, sparse soil pockets
+                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
+                    layer[r < 0.12] = _SOIL
+                elif biome == 1: # grassy: soil-dominant with some stone breaks
+                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SOIL, dtype=np.uint8)
+                    layer[r < 0.28] = _STONE
+                elif biome == 2: # sand_dune: 90% sand, 10% soil (digger food)
+                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SAND, dtype=np.uint8)
+                    layer[r < 0.10] = _SOIL
+                else:            # barren: stone/sand/soil wasteland
+                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
+                    layer[r < 0.35] = _SOIL
+                    layer[(r >= 0.65) & (r < 0.80)] = _SAND
+                cells[:, :, lz] = layer
         chunk.dirty = True
 
     # ------------------------------------------------------------------
@@ -227,6 +276,7 @@ class WorldGenerator:
             radius = random.randint(30, 50)
             self._lake_centers.append((cx, cy))
             r2 = radius * radius
+            lake_cells = []
             for dx in range(-radius, radius + 1):
                 for dy in range(-radius, radius + 1):
                     if dx * dx + dy * dy <= r2:
@@ -234,9 +284,18 @@ class WorldGenerator:
                         if not world.in_bounds(x, y, surface_z):
                             continue
                         world.set_cell(x, y, surface_z, int(CellType.WATER))
-                        # 2 cells deep
+                        # 2 cells deep — lower layer is water (kelp replaces some of these)
                         if world.in_bounds(x, y, surface_z - 1):
                             world.set_cell(x, y, surface_z - 1, int(CellType.WATER))
+                        lake_cells.append((x, y))
+
+            # Scatter aquatic vegetation (kelp) at z=surface_z-1 (lower water layer).
+            # Kelp is WOOD placed inside the water column; organisms at z=surface_z
+            # are adjacent (dz=-1) and can eat it — primary food source for gill organisms.
+            # ~15% density, clustered in patches for realism.
+            for x, y in lake_cells:
+                if random.random() < 0.15:
+                    world.set_cell(x, y, surface_z - 1, int(CellType.WOOD))
 
     # ------------------------------------------------------------------
     # Rivers
