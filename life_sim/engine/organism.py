@@ -101,7 +101,7 @@ class Organism:
         """ASCII character for rendering, scaled by organism size."""
         size = self.body.total_cells
         if size <= 2:
-            return '.'
+            return ','
         if size <= 5:
             return 'o'
         if size <= 8:

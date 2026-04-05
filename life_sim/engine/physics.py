@@ -115,14 +115,60 @@ class PhysicsEngine:
     def _fall_sand(self, x: int, y: int, z: int) -> bool:
         world = self.world
         below = z - 1
-        if below < 0:
-            return False
-        cell_below = world.get_cell(x, y, below)
-        if cell_below == _AIR or cell_below == _WATER:
-            # Swap sand with the cell below
-            world.set_cell(x, y, below, _SAND)
-            world.set_cell(x, y, z, cell_below)
+
+        # 1. Direct fall if cell below is air or water
+        if below >= 0:
+            cell_below = world.get_cell(x, y, below)
+            if cell_below == _AIR or cell_below == _WATER:
+                world.set_cell(x, y, below, _SAND)
+                world.set_cell(x, y, z, cell_below)
+                return True
+
+        # 2. Angle-of-repose slide: find the lowest reachable adjacent position.
+        # Sand slides into a lateral neighbour and falls as far as possible,
+        # but will not build a sand stack taller than 2.
+        best_nx, best_ny, best_nz = None, None, z  # must be strictly lower than z
+
+        laterals = [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+        random.shuffle(laterals)
+
+        for nx, ny in laterals:
+            if not world.in_bounds(nx, ny, z):
+                continue
+            # Entry cell at same level must be passable to slide into
+            if world.get_cell(nx, ny, z) not in (_AIR, _WATER):
+                continue
+
+            # Descend the adjacent column to find the lowest air/water cell
+            land_z = z
+            for cz in range(z - 1, -1, -1):
+                ct = world.get_cell(nx, ny, cz)
+                if ct == _AIR or ct == _WATER:
+                    land_z = cz
+                else:
+                    break
+
+            if land_z >= z:
+                continue  # no lower position found
+
+            # Enforce max stack height of 2 at destination
+            dest_stack = 0
+            cz = land_z - 1
+            while cz >= 0 and world.get_cell(nx, ny, cz) == _SAND:
+                dest_stack += 1
+                cz -= 1
+            if dest_stack >= 2:
+                continue  # would create a stack of 3+
+
+            if land_z < best_nz:
+                best_nz = land_z
+                best_nx, best_ny = nx, ny
+
+        if best_nx is not None:
+            world.set_cell(best_nx, best_ny, best_nz, _SAND)
+            world.set_cell(x, y, z, _AIR)
             return True
+
         return False
 
     # ------------------------------------------------------------------

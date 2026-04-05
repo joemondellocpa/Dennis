@@ -256,11 +256,30 @@ class Simulation:
             # Reproduce if conditions met
             maturity = ctx['maturity_ticks']
             repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.5) + 50
-            if (state.age >= maturity and state.calories > repro_cost):
-                state.calories -= repro_cost
-                baby = self._reproduce(org, ctx)
-                if baby:
-                    return baby
+            mode = org.genome.get_dominant_allele('reproduction_mode')
+            is_sexual = mode >= 128 and ctx['nearest_mate_id'] is not None
+
+            if is_sexual:
+                # Both parents must have enough calories; each pays half
+                mate = self.pool.organisms.get(ctx['nearest_mate_id'])
+                mate_cost = repro_cost // 2
+                my_cost = repro_cost - mate_cost
+                if (state.age >= maturity
+                        and state.calories > my_cost
+                        and mate and mate.is_alive
+                        and mate.state.calories > mate_cost):
+                    state.calories -= my_cost
+                    mate.state.calories -= mate_cost
+                    baby = self._reproduce(org, ctx, invested_calories=repro_cost)
+                    if baby:
+                        return baby
+            else:
+                # Asexual: only this organism pays
+                if state.age >= maturity and state.calories > repro_cost:
+                    state.calories -= repro_cost
+                    baby = self._reproduce(org, ctx, invested_calories=repro_cost)
+                    if baby:
+                        return baby
 
         elif atype == 'surface':
             # Move toward higher z (out of water)
@@ -392,30 +411,35 @@ class Simulation:
                 state.calories -= org.body.calorie_cost_per_tick * 3  # digging costs energy
                 break
 
-    def _reproduce(self, org: Organism, ctx: dict):
-        """Create offspring. Sexual if mate nearby and genome says sexual, else asexual."""
+    def _reproduce(self, org: Organism, ctx: dict, invested_calories: float = 50):
+        """Create offspring. Genome determines sexual vs asexual.
+        Baby starts with 80% of the calories invested by the parent(s),
+        capped at its own calorie capacity.
+        """
         mode = org.genome.get_dominant_allele('reproduction_mode')
 
         if mode >= 128 and ctx['nearest_mate_id']:
-            # Sexual
             mate = self.pool.organisms.get(ctx['nearest_mate_id'])
             if mate and mate.is_alive:
                 child_genome = Genome.sexual_reproduction(org.genome, mate.genome)
             else:
                 child_genome = Genome.asexual_reproduction(org.genome)
         else:
-            # Asexual
             child_genome = Genome.asexual_reproduction(org.genome)
 
         # Place offspring adjacent to parent
         ox, oy, oz = org.state.x, org.state.y, org.state.z
-        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
+        for dx, dy in [(1, 0), (-1, 0), (0, 1), (0, -1)]:
             nx, ny = ox + dx, oy + dy
             if self.world.in_bounds(nx, ny, oz):
                 ct = self.world.get_cell(nx, ny, oz)
                 if ct == CellType.AIR:
                     baby = Organism(child_genome, nx, ny, oz, species_id=org.species_id)
-                    baby.state.calories = baby.body.calorie_capacity * 0.3
+                    # Baby starts with 80% of invested calories, capped at capacity
+                    baby.state.calories = min(
+                        baby.body.calorie_capacity,
+                        invested_calories * 0.8
+                    )
                     return baby
         return None
 
