@@ -141,6 +141,7 @@ class AsciiUI:
         curses.init_pair(5, curses.COLOR_MAGENTA, -1)
         curses.init_pair(6, curses.COLOR_CYAN,    -1)
         curses.init_pair(7, curses.COLOR_WHITE,   -1)
+        curses.init_pair(8, curses.COLOR_YELLOW,  -1)  # orange (bold yellow = aposematism)
 
     # ------------------------------------------------------------------
     # Input handling
@@ -377,7 +378,10 @@ class AsciiUI:
                 if (world_x, world_y) in org_at:
                     org = org_at[(world_x, world_y)]
                     ch = org.display_char
-                    color = curses.color_pair(org.display_color_pair)
+                    cp = org.display_color_pair
+                    color = curses.color_pair(cp)
+                    if cp == 8:           # orange = toxic — render bold for brightness
+                        color |= curses.A_BOLD
                     if self.selected_organism and org.id == self.selected_organism.id:
                         color |= curses.A_REVERSE
                 else:

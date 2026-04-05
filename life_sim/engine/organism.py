@@ -117,11 +117,18 @@ class Organism:
 
     @property
     def display_color_pair(self) -> int:
-        """Return a curses color-pair index (1..7) based on genome color genes.
+        """Return a curses color-pair index (1..8) based on genome color genes.
 
         Color pairs (standard curses setup assumed by the renderer):
-          1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white
+          1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan, 7=white, 8=orange
+
+        Aposematism: toxic organisms always display as orange (pair 8) regardless
+        of their color genes, warning predators away.
         """
+        # Aposematism override: toxicity > 127 = orange warning coloration
+        if self.genome.get_dominant_allele('toxicity') > 127:
+            return 8  # orange
+
         r = self.genome.get_dominant_allele('color_r')
         g = self.genome.get_dominant_allele('color_g')
         b = self.genome.get_dominant_allele('color_b')

@@ -290,7 +290,12 @@ class Simulation:
                 # Prey detection (within vision)
                 can_attack = org.genome.get_dominant_allele('can_attack') > 127
                 if can_attack and other.body.total_cells < body.total_cells * 0.7:
-                    if dist < nearest_prey_dist:
+                    # toxin_detection: predator recognizes orange=toxic and avoids toxic prey
+                    prey_is_toxic = other.genome.get_dominant_allele('toxicity') > 127
+                    has_toxin_detection = org.genome.get_dominant_allele('toxin_detection') > 127
+                    if prey_is_toxic and has_toxin_detection:
+                        pass  # skip this prey — it's orange/toxic and predator knows it
+                    elif dist < nearest_prey_dist:
                         nearest_prey_dist = dist
                         nearest_prey_id = other.id
 

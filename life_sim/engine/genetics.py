@@ -49,6 +49,7 @@ class Genome:
         'sound_range',      # phenotype: bonus threat detection radius
         'cold_blood',       # >127 = 0.5x metabolism cost AND 0.5x max movement speed
         'pack_instinct',    # >127 = +50% attack dmg when a pack-mate recently hit same prey
+        'toxin_detection',  # >127 = recognizes orange=toxic; predator skips toxic prey
         # Behavior slots (index into behavior registry)
         'behavior_slot_0',
         'behavior_slot_1',
