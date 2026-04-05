@@ -493,7 +493,10 @@ class Simulation:
         """Create offspring. Genome determines sexual vs asexual.
         Baby starts with 80% of the calories invested by the parent(s),
         capped at its own calorie capacity.
+        Returns None immediately if the population cap (1000) is reached.
         """
+        if self.pool.count() >= 1000:
+            return None
         mode = org.genome.get_dominant_allele('reproduction_mode')
 
         if mode >= 128 and ctx['nearest_mate_id']:

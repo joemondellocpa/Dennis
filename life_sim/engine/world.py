@@ -115,16 +115,20 @@ class WorldGenerator:
     """Generates a default world layout using numpy bulk operations."""
 
     # Layer boundaries (z indices, inclusive)
-    STONE_TOP = 10          # z 0..10  -> STONE
-    SOIL_TOP = 20           # z 11..20 -> SOIL
-    SOIL_POCKET_TOP = 25    # z 21..25 -> SOIL with air pockets
-    # z 26+                 -> AIR
+    #
+    #  z 0..14  : STONE bedrock
+    #  z 15..18 : underground mix  (50% STONE, 44% SAND, 5% SOIL pockets, 1% WOOD veins)
+    #  z 19..20 : thin topsoil     (2 layers — scarce surface calories)
+    #  z 21+    : AIR              (organisms live here)
+    BEDROCK_TOP    = 14
+    UNDERGROUND_TOP = 18
+    SOIL_TOP       = 20   # surface; organisms spawn at z=21
 
-    AIR_POCKET_PROB = 0.08  # probability a cell in the pocket zone becomes AIR
-    WATER_POOL_COUNT = 80   # number of water pools to scatter
-    WATER_POOL_RADIUS = 3   # radius of each water pool (in cells)
-    OUTCROP_COUNT = 30      # number of stone outcroppings
-    WOOD_PATCH_COUNT = 200  # food plants scattered on soil surface
+    WATER_POOL_COUNT = 80
+    WATER_POOL_RADIUS = 3
+    OUTCROP_COUNT = 20
+    GROVE_COUNT = 4        # dense tree groves on the surface
+    GROVE_RADIUS = 12      # cells radius per grove
 
     def generate_default(self, world: World):
         """Generate terrain for the entire world."""
@@ -132,7 +136,7 @@ class WorldGenerator:
         self._add_water_pools(world)
         self._add_stone_outcroppings(world)
         self._add_central_lake(world)
-        self._add_wood_patches(world)
+        self._add_groves(world)
 
     # ------------------------------------------------------------------
     # Layer filling
@@ -142,11 +146,8 @@ class WorldGenerator:
         """Fill the world layer by layer, operating chunk-by-chunk for speed."""
         for cz in range(CHUNKS_D):
             z_base = cz * CHUNK_SIZE
-
-            # Entirely AIR slab — don't create chunks
-            if z_base > self.SOIL_POCKET_TOP:
-                continue
-
+            if z_base > self.SOIL_TOP:
+                continue  # entirely AIR — skip chunk creation
             for cx in range(CHUNKS_W):
                 for cy in range(CHUNKS_H):
                     chunk = world.get_chunk(cx, cy, cz)
@@ -155,20 +156,30 @@ class WorldGenerator:
     def _fill_chunk_layers(self, chunk: Chunk, z_base: int):
         """Fill a single chunk according to layer rules."""
         cells = chunk.cells  # shape (16,16,16), axis order: x, y, z
+        _STONE = int(CellType.STONE)
+        _SAND  = int(CellType.SAND)
+        _SOIL  = int(CellType.SOIL)
+        _WOOD  = int(CellType.WOOD)
+
         for lz in range(CHUNK_SIZE):
             z = z_base + lz
-            if z > self.SOIL_POCKET_TOP:
-                # AIR (already zeros)
+            if z > self.SOIL_TOP:
+                # AIR — leave as zeros
                 continue
-            elif z <= self.STONE_TOP:
-                cells[:, :, lz] = int(CellType.STONE)
-            elif z <= self.SOIL_TOP:
-                cells[:, :, lz] = int(CellType.SOIL)
+            elif z <= self.BEDROCK_TOP:
+                # Solid bedrock
+                cells[:, :, lz] = _STONE
+            elif z <= self.UNDERGROUND_TOP:
+                # Underground mix: 50% stone, 44% sand, 5% soil, 1% wood
+                r = np.random.random((CHUNK_SIZE, CHUNK_SIZE))
+                layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
+                layer[r >= 0.50]              = _SAND
+                layer[(r >= 0.94) & (r < 0.99)] = _SOIL
+                layer[r >= 0.99]              = _WOOD
+                cells[:, :, lz] = layer
             else:
-                # z in [SOIL_TOP+1 .. SOIL_POCKET_TOP]: soil with air pockets
-                cells[:, :, lz] = int(CellType.SOIL)
-                mask = np.random.random((CHUNK_SIZE, CHUNK_SIZE)) < self.AIR_POCKET_PROB
-                cells[:, :, lz][mask] = int(CellType.AIR)
+                # z 19..20: thin topsoil (2 layers)
+                cells[:, :, lz] = _SOIL
         chunk.dirty = True
 
     # ------------------------------------------------------------------
@@ -220,36 +231,46 @@ class WorldGenerator:
     # Wood patches (surface food)
     # ------------------------------------------------------------------
 
-    def _add_wood_patches(self, world: World):
-        """Scatter WOOD columns on the soil surface as accessible food for organisms.
+    def _add_groves(self, world: World):
+        """Place a small number of dense tree groves on the soil surface.
 
-        WOOD (calorie_value=10) is placed at z = surface_z + 1, where
-        organisms spawn and roam, giving them food they can eat without digging.
+        Groves are the primary surface food source. With only GROVE_COUNT groves
+        and thin topsoil (2 layers, calorie_value=1), food is scarce enough to
+        keep populations in check while rewarding organisms that find the groves.
         """
-        for _ in range(self.WOOD_PATCH_COUNT):
-            px = random.randint(0, WORLD_W - 1)
-            py = random.randint(0, WORLD_H - 1)
-            # Find surface: highest non-AIR z
-            surface_z = None
-            for sz in range(WORLD_D - 1, -1, -1):
-                if world.get_cell(px, py, sz) != int(CellType.AIR):
-                    surface_z = sz
-                    break
-            if surface_z is None:
-                continue
-            patch_height = random.randint(1, 3)
-            for dz in range(patch_height):
-                z = surface_z + 1 + dz
-                if z < WORLD_D and world.get_cell(px, py, z) == int(CellType.AIR):
-                    world.set_cell(px, py, z, int(CellType.WOOD))
+        surface_z = self.SOIL_TOP  # z=20 is topsoil surface; trees go at z=21+
+        tree_base = surface_z + 1  # z=21
+
+        for _ in range(self.GROVE_COUNT):
+            gx = random.randint(self.GROVE_RADIUS, WORLD_W - self.GROVE_RADIUS - 1)
+            gy = random.randint(self.GROVE_RADIUS, WORLD_H - self.GROVE_RADIUS - 1)
+            r = self.GROVE_RADIUS
+
+            for dx in range(-r, r + 1):
+                for dy in range(-r, r + 1):
+                    dist2 = dx * dx + dy * dy
+                    if dist2 > r * r:
+                        continue
+                    x, y = gx + dx, gy + dy
+                    # Tree density falls off from grove centre
+                    edge_ratio = dist2 / (r * r)
+                    if random.random() > (1.0 - edge_ratio * 0.7):
+                        continue  # sparse at edges, dense at centre
+                    # Tree height: 1–4 cells, taller near centre
+                    max_h = max(1, int(4 * (1.0 - edge_ratio)))
+                    height = random.randint(1, max_h)
+                    for dz in range(height):
+                        z = tree_base + dz
+                        if z < WORLD_D and world.get_cell(x, y, z) == int(CellType.AIR):
+                            world.set_cell(x, y, z, int(CellType.WOOD))
 
     # ------------------------------------------------------------------
     # Stone outcroppings
     # ------------------------------------------------------------------
 
     def _add_stone_outcroppings(self, world: World):
-        """Scatter small stone blobs just above the soil layer."""
-        base_z = self.SOIL_TOP + 1
+        """Scatter small stone blobs just above the soil surface."""
+        base_z = self.SOIL_TOP + 1  # z=21
 
         for _ in range(self.OUTCROP_COUNT):
             ox = random.randint(1, WORLD_W - 2)

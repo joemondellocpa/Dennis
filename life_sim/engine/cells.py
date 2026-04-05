@@ -16,7 +16,7 @@ class CellType(IntEnum):
 CELL_PROPS = {
     CellType.AIR:   dict(density=0,    passable=True,  fluid=False, diggable=False, flammable=False, calorie_value=0,  light_pass=True,  heat_pass=True),
     CellType.STONE: dict(density=2700, passable=False, fluid=False, diggable=True,  flammable=False, calorie_value=0,  light_pass=False, heat_pass=False),
-    CellType.SOIL:  dict(density=1500, passable=False, fluid=False, diggable=True,  flammable=False, calorie_value=5,  light_pass=False, heat_pass=False),
+    CellType.SOIL:  dict(density=1500, passable=False, fluid=False, diggable=True,  flammable=False, calorie_value=1,  light_pass=False, heat_pass=False),
     CellType.WATER: dict(density=1000, passable=True,  fluid=True,  diggable=False, flammable=False, calorie_value=0,  light_pass=True,  heat_pass=True),
     CellType.SAND:  dict(density=1600, passable=False, fluid=False, diggable=True,  flammable=False, calorie_value=0,  light_pass=False, heat_pass=False),
     CellType.LAVA:  dict(density=2800, passable=False, fluid=True,  diggable=False, flammable=False, calorie_value=0,  light_pass=False, heat_pass=True),
