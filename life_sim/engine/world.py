@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import random
 
@@ -124,7 +125,7 @@ class WorldGenerator:
     UNDERGROUND_TOP = 18
     SOIL_TOP       = 20   # surface; organisms spawn at z=21
 
-    WATER_POOL_COUNT = 80
+    WATER_POOL_COUNT = 40
     WATER_POOL_RADIUS = 3
     OUTCROP_COUNT = 20
     GROVE_COUNT = 4        # dense tree groves on the surface
@@ -135,7 +136,8 @@ class WorldGenerator:
         self._fill_layers(world)
         self._add_water_pools(world)
         self._add_stone_outcroppings(world)
-        self._add_central_lake(world)
+        self._add_lakes(world)
+        self._add_rivers(world)
         self._add_groves(world)
 
     # ------------------------------------------------------------------
@@ -204,28 +206,90 @@ class WorldGenerator:
                             world.set_cell(x, y, surface_z, int(CellType.WATER))
 
     # ------------------------------------------------------------------
-    # Central lake (guaranteed large body of water)
+    # Lakes (multiple large bodies of water)
     # ------------------------------------------------------------------
 
-    def _add_central_lake(self, world: World):
-        """Place a guaranteed large lake near the world centre."""
-        cx = WORLD_W // 2 + random.randint(-50, 50)
-        cy = WORLD_H // 2 + random.randint(-50, 50)
-        radius = random.randint(20, 35)
-        # Find typical surface z at centre
-        surface_z = self.SOIL_TOP + 1  # z=21, reliable soil surface
-        for r_step in range(radius + 1):
-            for dx in range(-r_step, r_step + 1):
-                for dy in range(-r_step, r_step + 1):
-                    if dx * dx + dy * dy <= radius * radius:
+    def _add_lakes(self, world: World):
+        """Place 3 large lakes spread across the world."""
+        # Fixed approximate positions: one per third of the map
+        positions = [
+            (WORLD_W // 4 + random.randint(-30, 30),
+             WORLD_H // 4 + random.randint(-30, 30)),
+            (WORLD_W // 2 + random.randint(-30, 30),
+             WORLD_H // 2 + random.randint(-30, 30)),
+            (3 * WORLD_W // 4 + random.randint(-30, 30),
+             3 * WORLD_H // 4 + random.randint(-30, 30)),
+        ]
+        self._lake_centers = []  # store for river generation
+        surface_z = self.SOIL_TOP + 1  # z=21 — water sits on topsoil
+
+        for cx, cy in positions:
+            radius = random.randint(30, 50)
+            self._lake_centers.append((cx, cy))
+            r2 = radius * radius
+            for dx in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    if dx * dx + dy * dy <= r2:
                         x, y = cx + dx, cy + dy
                         if not world.in_bounds(x, y, surface_z):
                             continue
-                        # Carve a basin: set surface z and one below to water
                         world.set_cell(x, y, surface_z, int(CellType.WATER))
-                        # Also set z-1 to water (deeper lake)
+                        # 2 cells deep
                         if world.in_bounds(x, y, surface_z - 1):
                             world.set_cell(x, y, surface_z - 1, int(CellType.WATER))
+
+    # ------------------------------------------------------------------
+    # Rivers
+    # ------------------------------------------------------------------
+
+    def _add_rivers(self, world: World):
+        """Carve rivers connecting the lakes with winding paths."""
+        if not hasattr(self, '_lake_centers') or len(self._lake_centers) < 2:
+            return
+        surface_z = self.SOIL_TOP + 1  # z=21
+
+        # Connect lake[0]→lake[1] and lake[1]→lake[2]
+        pairs = [(0, 1), (1, 2)]
+        for i, j in pairs:
+            x0, y0 = self._lake_centers[i]
+            x1, y1 = self._lake_centers[j]
+            self._carve_river(world, x0, y0, x1, y1, surface_z)
+
+    def _carve_river(self, world: World, x0: int, y0: int, x1: int, y1: int, z: int):
+        """Carve a winding river from (x0,y0) to (x1,y1) at altitude z.
+
+        Uses a random walk biased toward the destination.
+        River width: 2-4 cells.
+        """
+        x, y = x0, y0
+        width = random.randint(2, 4)
+        max_steps = int(math.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2) * 2.5)
+
+        for _ in range(max_steps):
+            # Place water in a circle of `width` cells around (x, y)
+            for dx in range(-width, width + 1):
+                for dy in range(-width, width + 1):
+                    if dx * dx + dy * dy <= width * width:
+                        nx, ny = x + dx, y + dy
+                        if world.in_bounds(nx, ny, z):
+                            world.set_cell(nx, ny, z, int(CellType.WATER))
+                        if world.in_bounds(nx, ny, z - 1):
+                            world.set_cell(nx, ny, z - 1, int(CellType.WATER))
+
+            # Step toward destination with some random wandering
+            if abs(x1 - x) < 3 and abs(y1 - y) < 3:
+                break  # close enough
+
+            # 70% bias toward target, 30% random wander
+            if random.random() < 0.7:
+                dx = 1 if x1 > x else (-1 if x1 < x else 0)
+                dy = 1 if y1 > y else (-1 if y1 < y else 0)
+            else:
+                dx = random.choice([-1, 0, 1])
+                dy = random.choice([-1, 0, 1])
+
+            x = max(0, min(WORLD_W - 1, x + dx))
+            y = max(0, min(WORLD_H - 1, y + dy))
 
     # ------------------------------------------------------------------
     # Wood patches (surface food)

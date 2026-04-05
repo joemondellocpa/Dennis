@@ -1,15 +1,12 @@
 {
   "id": "reproduce_fed",
-  "name": "Reproduce When Well Fed",
-  "priority": 50,
-  "condition": {
-    "type": "mate_nearby",
-    "param": 20
-  },
+  "name": "Reproduce When Fed",
+  "priority": 40,
+  "condition": { "type": "always", "param": 0 },
   "action": {
     "type": "reproduce",
-    "speed_multiplier": 0.5,
-    "calorie_multiplier": 3.0,
-    "param": 80
+    "speed_multiplier": 1.0,
+    "calorie_multiplier": 1.5,
+    "param": 75
   }
 }

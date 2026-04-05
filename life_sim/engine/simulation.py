@@ -49,6 +49,15 @@ class Simulation:
                 # Bias toward predator — give can_attack dominant allele
                 org.genome._alleles['can_attack'] = (200, 210)
                 org.body = BodyPlan(org.genome)  # recompute body with updated genome
+            # Bias lung_ratio to match spawn terrain
+            spawn_cell = self.world.get_cell(x, y, z - 1)  # cell below = the surface
+            if spawn_cell == CellType.WATER:
+                # Bias toward gill (lung_ratio < 128)
+                org.genome._alleles['lung_ratio'] = (random.randint(0, 80), random.randint(0, 80))
+            else:
+                # Bias toward lung (lung_ratio > 128)
+                org.genome._alleles['lung_ratio'] = (random.randint(150, 255), random.randint(150, 255))
+            org.body = BodyPlan(org.genome)  # recompute body with biased genome
             self.pool.add(org)
             self.species_registry[org.species_id] = {
                 'genome_snapshot': org.genome,
@@ -146,6 +155,40 @@ class Simulation:
         if self.tick_count % 3 == 0:
             self._try_eat(org)
 
+        # Unconditional reproduce attempt — every 5 ticks for mature, well-fed orgs.
+        # This ensures reproduction happens regardless of behavior slot lottery.
+        if self.tick_count % 5 == org.id % 5:  # stagger across organisms
+            maturity_ticks = int(org.genome.phenotype('maturity_ticks') * 500) + 100
+            if state.age >= maturity_ticks:
+                cal_ratio = state.calories / max(1, body.calorie_capacity)
+                repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + 10
+                if cal_ratio >= 0.75 and state.calories > repro_cost:
+                    mode = org.genome.get_dominant_allele('reproduction_mode')
+                    # Build minimal context for _reproduce (needs nearest_mate_id)
+                    living_near = [o for o in living_now
+                                   if o is not org and o.is_alive
+                                   and abs(o.state.x - state.x) + abs(o.state.y - state.y) <= 200]
+                    nearest_mate_id = living_near[0].id if living_near else None
+                    is_sexual = mode >= 128 and nearest_mate_id is not None
+                    mini_ctx = {'nearest_mate_id': nearest_mate_id}
+                    if is_sexual:
+                        mate = self.pool.organisms.get(nearest_mate_id)
+                        mate_cost = repro_cost // 2
+                        my_cost = repro_cost - mate_cost
+                        if (mate and mate.is_alive and
+                                state.calories > my_cost and
+                                mate.state.calories > mate_cost):
+                            state.calories -= my_cost
+                            mate.state.calories -= mate_cost
+                            baby = self._reproduce(org, mini_ctx, invested_calories=repro_cost)
+                            if baby:
+                                return baby
+                    else:
+                        state.calories -= repro_cost
+                        baby = self._reproduce(org, mini_ctx, invested_calories=repro_cost)
+                        if baby:
+                            return baby
+
         # Build world context for behavior evaluator
         ctx = self._build_world_context(org, living_now)
 
@@ -187,6 +230,7 @@ class Simulation:
         # while still reliably finding nearby threats/prey/mates.
         import random as _rnd
         scan_pool = living_now if len(living_now) <= 100 else _rnd.sample(living_now, 100)
+        MATE_RANGE = 200
         for other in scan_pool:
             if other.id == org.id:
                 continue
@@ -194,26 +238,31 @@ class Simulation:
             dy = other.state.y - state.y
             dz = other.state.z - state.z
             dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-            if dist > vision:
+
+            if dist > max(vision, MATE_RANGE):
                 continue
 
-            # Threat: other can attack us and is big enough to be dangerous
-            can_attack_me = other.genome.get_dominant_allele('can_attack') > 127
-            if can_attack_me and other.body.total_cells > body.total_cells * 0.7:
-                if dist < nearest_threat_dist:
-                    nearest_threat_dist = dist
-            # Prey: we can attack and other is small enough
-            can_attack = org.genome.get_dominant_allele('can_attack') > 127
-            if can_attack and other.body.total_cells < body.total_cells * 0.7:
-                if dist < nearest_prey_dist:
-                    nearest_prey_dist = dist
-                    nearest_prey_id = other.id
-            # Mate: same species, different id, mature
-            elif (other.genome.get_dominant_allele('reproduction_mode') >= 128 and
-                  other.state.age >= other.body.__class__.__dict__.get('maturity_ticks', 100)):
-                if dist < nearest_mate_dist:
-                    nearest_mate_dist = dist
-                    nearest_mate_id = other.id
+            if dist <= vision:
+                # Threat detection (within vision)
+                can_attack_me = other.genome.get_dominant_allele('can_attack') > 127
+                if can_attack_me and other.body.total_cells > body.total_cells * 0.7:
+                    if dist < nearest_threat_dist:
+                        nearest_threat_dist = dist
+
+                # Prey detection (within vision)
+                can_attack = org.genome.get_dominant_allele('can_attack') > 127
+                if can_attack and other.body.total_cells < body.total_cells * 0.7:
+                    if dist < nearest_prey_dist:
+                        nearest_prey_dist = dist
+                        nearest_prey_id = other.id
+
+            # Mate detection uses wider range
+            if dist <= MATE_RANGE:
+                if (other.genome.get_dominant_allele('reproduction_mode') >= 128 and
+                        other.state.age >= 100):
+                    if dist < nearest_mate_dist:
+                        nearest_mate_dist = dist
+                        nearest_mate_id = other.id
 
         # Food scan — expensive, so cache the result for FOOD_SCAN_INTERVAL ticks.
         # If the organism has moved far from its cached food, invalidate.
@@ -300,33 +349,32 @@ class Simulation:
                 self._try_dig(org, target[0], target[1], target[2])
 
         elif atype == 'reproduce':
-            # Reproduce if conditions met
             maturity = ctx['maturity_ticks']
-            repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.5) + 50
+            cal_threshold = action.get('action_param', action.get('param', 75)) / 100.0
+            repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + 10
             mode = org.genome.get_dominant_allele('reproduction_mode')
-            is_sexual = mode >= 128 and ctx['nearest_mate_id'] is not None
+            cal_ratio = state.calories / max(1, body.calorie_capacity)
+            is_sexual = mode >= 128 and ctx.get('nearest_mate_id') is not None
 
-            if is_sexual:
-                # Both parents must have enough calories; each pays half
-                mate = self.pool.organisms.get(ctx['nearest_mate_id'])
-                mate_cost = repro_cost // 2
-                my_cost = repro_cost - mate_cost
-                if (state.age >= maturity
-                        and state.calories > my_cost
-                        and mate and mate.is_alive
-                        and mate.state.calories > mate_cost):
-                    state.calories -= my_cost
-                    mate.state.calories -= mate_cost
-                    baby = self._reproduce(org, ctx, invested_calories=repro_cost)
-                    if baby:
-                        return baby
-            else:
-                # Asexual: only this organism pays
-                if state.age >= maturity and state.calories > repro_cost:
-                    state.calories -= repro_cost
-                    baby = self._reproduce(org, ctx, invested_calories=repro_cost)
-                    if baby:
-                        return baby
+            if state.age >= maturity and cal_ratio >= cal_threshold:
+                if is_sexual:
+                    mate = self.pool.organisms.get(ctx['nearest_mate_id'])
+                    mate_cost = repro_cost // 2
+                    my_cost = repro_cost - mate_cost
+                    if (state.calories > my_cost and mate and mate.is_alive
+                            and mate.state.calories > mate_cost):
+                        state.calories -= my_cost
+                        mate.state.calories -= mate_cost
+                        baby = self._reproduce(org, ctx, invested_calories=repro_cost)
+                        if baby:
+                            return baby
+                else:
+                    # Asexual — no mate required
+                    if state.calories > repro_cost:
+                        state.calories -= repro_cost
+                        baby = self._reproduce(org, ctx, invested_calories=repro_cost)
+                        if baby:
+                            return baby
 
         elif atype == 'hunt':
             prey_id = ctx.get('nearest_prey_id')
