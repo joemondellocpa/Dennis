@@ -49,6 +49,7 @@ HELP_LINES = [
     " Shift+Tab       Cycle to prev organism",
     " h               Toggle this help",
     " S               Species registry",
+    " G               Gene prevalence",
     " q               Quit",
     "",
     " Press any key to close ",
@@ -82,6 +83,8 @@ class AsciiUI:
         self.help_visible = False
         self.species_screen_visible = False
         self._species_scroll = 0
+        self.gene_screen_visible = False
+        self._gene_scroll = 0
 
         # FPS tracking — store timestamps of last N frame render completions
         self._frame_times: deque = deque(maxlen=20)
@@ -170,6 +173,21 @@ class AsciiUI:
                 return False
             # Any other key closes the species screen
             self.species_screen_visible = False
+            return False
+
+        if key == ord('G'):
+            self.gene_screen_visible = not self.gene_screen_visible
+            self._gene_scroll = 0
+            return False
+
+        if self.gene_screen_visible:
+            if key == curses.KEY_UP:
+                self._gene_scroll = max(0, self._gene_scroll - 1)
+                return False
+            elif key == curses.KEY_DOWN:
+                self._gene_scroll += 1
+                return False
+            self.gene_screen_visible = False
             return False
 
         # --- Quit ---
@@ -322,6 +340,9 @@ class AsciiUI:
 
         if self.species_screen_visible:
             self._render_species_screen(h, w)
+
+        if self.gene_screen_visible:
+            self._render_gene_screen(h, w)
 
         # Track frame time for FPS computation
         now = time.time()
@@ -685,6 +706,108 @@ class AsciiUI:
                   "  |  Up/Down to scroll  |  any other key to close")
         try:
             self.stdscr.addstr(footer_row, 0, footer[:w - 1], attr_title)
+        except curses.error:
+            pass
+
+    def _render_gene_screen(self, h: int, w: int):
+        """Full-screen gene prevalence overlay — average dominant allele per gene over time."""
+        attr_title  = curses.color_pair(3) | curses.A_BOLD
+        attr_header = curses.color_pair(7) | curses.A_BOLD
+        attr_gene   = curses.color_pair(7)
+        attr_high   = curses.color_pair(2)   # green  = high value (>170)
+        attr_mid    = curses.color_pair(3)   # yellow = mid value (85-170)
+        attr_low    = curses.color_pair(1)   # red    = low value (<85)
+        attr_bg     = curses.color_pair(7)
+
+        # Background
+        for row in range(h):
+            try:
+                self.stdscr.addstr(row, 0, ' ' * (w - 1), attr_bg)
+            except curses.error:
+                pass
+
+        # Title
+        try:
+            self.stdscr.addstr(0, 0, "GENE PREVALENCE  [G to close]  (avg dominant allele 0-255, sparkline=last 40 ticks)".ljust(w - 1), attr_title)
+        except curses.error:
+            pass
+
+        # Header
+        col_gene  = 0
+        col_cur   = 22
+        col_spark = 27
+        header = f"  {'GENE':<20}{'AVG':>5}  HISTORY (last 40 samples)"
+        try:
+            self.stdscr.addstr(1, 0, header[:w - 1], attr_header)
+            self.stdscr.addstr(2, 0, '-' * (w - 1), attr_header)
+        except curses.error:
+            pass
+
+        # Fetch history from simulation
+        history = []
+        try:
+            history = self.sim.get_gene_history()
+        except Exception:
+            pass
+
+        # Build per-gene sparkline from last 40 history samples
+        SPARK_CHARS = ' ▁▂▃▄▅▆▇█'  # 9 levels, index by value//29 (0-255 → 0-8)
+        SPARK_LEN = 40
+
+        from life_sim.engine.genetics import Genome
+        genes = Genome.GENES
+
+        # Current averages (latest snapshot)
+        current = {}
+        if history:
+            _, current = history[-1]
+
+        # Clamp scroll
+        max_scroll = max(0, len(genes) - (h - 4))
+        self._gene_scroll = min(self._gene_scroll, max_scroll)
+
+        for row_i, gene in enumerate(genes[self._gene_scroll:]):
+            screen_row = 3 + row_i
+            if screen_row >= h - 1:
+                break
+
+            avg = current.get(gene, 0.0)
+            avg_int = int(avg)
+
+            # Build sparkline string from history
+            spark = ''
+            samples = [snap.get(gene, 0) for _, snap in history]
+            # Take last SPARK_LEN samples
+            samples = samples[-SPARK_LEN:]
+            # Pad left with spaces if fewer than SPARK_LEN
+            pad = SPARK_LEN - len(samples)
+            spark = ' ' * pad
+            for v in samples:
+                idx = min(8, int(v) // 29)
+                spark += SPARK_CHARS[idx]
+
+            # Color based on current value
+            if avg >= 170:
+                val_attr = attr_high
+            elif avg >= 85:
+                val_attr = attr_mid
+            else:
+                val_attr = attr_low
+
+            gene_str = f"  {gene:<20}"
+            val_str  = f"{avg_int:>4} "
+
+            try:
+                self.stdscr.addstr(screen_row, 0, gene_str[:col_cur], attr_gene)
+                self.stdscr.addstr(screen_row, col_cur, val_str, val_attr)
+                self.stdscr.addstr(screen_row, col_spark, spark[:w - col_spark - 1], attr_gene)
+            except curses.error:
+                pass
+
+        # Scroll hint at bottom
+        try:
+            hint = f"  Up/Down to scroll  ({self._gene_scroll + 1}-{min(self._gene_scroll + h - 4, len(genes))} of {len(genes)} genes)"
+            self.stdscr.addstr(h - 1, 0, hint[:w - 1], attr_header)
         except curses.error:
             pass
 

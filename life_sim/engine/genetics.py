@@ -39,6 +39,16 @@ class Genome:
         'brain_ratio',
         'shell_ratio',
         'lung_ratio',          # dominant > 128 = lung (land), <= 128 = gill (water)
+        'tree_affinity',    # >127 = gains calories adjacent to WOOD
+        'flock_behavior',   # >127 = seeks conspecifics; <128 = solitary/territorial
+        'sprint_speed',     # phenotype: burst speed multiplier for hunt/flee
+        'armor',            # phenotype: reduces calorie damage received from attacks
+        'toxicity',         # >127 = toxic; killing this org costs attacker 20 cal
+        'camouflage',       # phenotype: reduces range at which predators spot this org
+        'burrow_speed',     # phenotype: multiplies dig steps per action
+        'sound_range',      # phenotype: bonus threat detection radius
+        'cold_blood',       # >127 = 0.5x metabolism cost AND 0.5x max movement speed
+        'pack_instinct',    # >127 = +50% attack dmg when a pack-mate recently hit same prey
         # Behavior slots (index into behavior registry)
         'behavior_slot_0',
         'behavior_slot_1',

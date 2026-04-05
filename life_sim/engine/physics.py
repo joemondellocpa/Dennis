@@ -87,25 +87,11 @@ class PhysicsEngine:
 
     def _spread_water(self, x: int, y: int, z: int) -> bool:
         world = self.world
-        # Try to fall down first
         below = z - 1
         if below >= 0 and world.get_cell(x, y, below) == _AIR:
             world.set_cell(x, y, below, _WATER)
             world.set_cell(x, y, z, _AIR)
             return True
-
-        # Spread laterally to an AIR neighbor
-        lateral = [
-            (x - 1, y, z), (x + 1, y, z),
-            (x, y - 1, z), (x, y + 1, z),
-        ]
-        random.shuffle(lateral)
-        for nx, ny, nz in lateral:
-            if world.in_bounds(nx, ny, nz) and world.get_cell(nx, ny, nz) == _AIR:
-                world.set_cell(nx, ny, nz, _WATER)
-                world.set_cell(x, y, z, _AIR)
-                return True
-
         return False
 
     # ------------------------------------------------------------------

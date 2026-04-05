@@ -1,5 +1,6 @@
 import random
 import math
+from collections import deque
 from .world import World, WorldGenerator, WORLD_W, WORLD_H, WORLD_D, CHUNK_SIZE
 from .cells import CellType, CELL_PROPS
 from .physics import PhysicsEngine
@@ -25,6 +26,9 @@ class Simulation:
 
         # Species registry: species_id -> {'genome_snapshot': Genome, 'first_tick': int, 'extinct_tick': int|None}
         self.species_registry: dict = {}
+
+        # Rolling gene history snapshots (200 ticks max)
+        self._gene_history: deque = deque(maxlen=200)
 
         # Init
         load_all_behaviors()
@@ -113,6 +117,21 @@ class Simulation:
         # 5. Cull if over limit
         self.pool.cull_to_limit()
 
+        # Sample gene averages every 5 ticks for the gene screen
+        if self.tick_count % 5 == 0:
+            living_snapshot = self.pool.living()
+            if living_snapshot:
+                from .genetics import Genome
+                snapshot = {}
+                for gene in Genome.GENES:
+                    vals = [o.genome.get_dominant_allele(gene) for o in living_snapshot]
+                    snapshot[gene] = sum(vals) / len(vals)
+                self._gene_history.append((self.tick_count, snapshot))
+
+    def get_gene_history(self):
+        """Return list of (tick, {gene: avg_dominant}) snapshots."""
+        return list(self._gene_history)
+
     def _process_organism(self, org: Organism, living_now: list):
         """
         Process one organism for one tick.
@@ -149,6 +168,17 @@ class Simulation:
         # Dry out if has gill and not in water
         if not state.in_water and body.has_gill:
             state.calories -= body.calorie_cost_per_tick * 1.5
+
+        # tree_affinity: gain calories when adjacent to WOOD cells
+        if org.genome.get_dominant_allele('tree_affinity') > 127:
+            for _, _, _, neighbor_ct in self.world.get_neighbors(state.x, state.y, state.z):
+                if neighbor_ct == CellType.WOOD:
+                    state.calories = min(body.calorie_capacity, state.calories + 2.0)
+                    break
+
+        # cold_blood: 50% metabolism reduction (applied by reducing cost here)
+        if org.genome.get_dominant_allele('cold_blood') > 127:
+            state.calories += body.calorie_cost_per_tick * 0.5  # refund half the tick cost
 
         # Unconditional eat attempt every 3 ticks — baseline survival independent
         # of which behavior slots the organism rolled in its genome.
@@ -196,7 +226,7 @@ class Simulation:
         action = self.evaluator.evaluate(state, body, org.genome, ctx)
         if action:
             state.current_behavior = action['behavior_name']
-            result = self._execute_action(org, action, ctx)
+            result = self._execute_action(org, action, ctx, living_now)
             if result == 'dead':
                 return 'dead'
             if isinstance(result, Organism):
@@ -215,6 +245,10 @@ class Simulation:
         genome = org.genome
 
         vision = min(50, int(org.genome.phenotype('vision_range') * 50) + 5)
+
+        # sound_range adds threat detection bonus
+        sound_bonus = int(org.genome.phenotype('sound_range') * 20)
+        threat_scan_r = min(70, vision + sound_bonus)
 
         # Defaults
         nearest_threat_dist = float('inf')
@@ -239,16 +273,20 @@ class Simulation:
             dz = other.state.z - state.z
             dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-            if dist > max(vision, MATE_RANGE):
+            if dist > max(threat_scan_r, vision, MATE_RANGE):
                 continue
 
-            if dist <= vision:
-                # Threat detection (within vision)
+            if dist <= threat_scan_r:
+                # Threat detection (within threat scan range)
                 can_attack_me = other.genome.get_dominant_allele('can_attack') > 127
                 if can_attack_me and other.body.total_cells > body.total_cells * 0.7:
                     if dist < nearest_threat_dist:
-                        nearest_threat_dist = dist
+                        # camouflage: predator sees this organism as if it were farther away
+                        camo = org.genome.phenotype('camouflage')
+                        effective_dist = dist * (1.0 + camo * 1.5)
+                        nearest_threat_dist = effective_dist
 
+            if dist <= vision:
                 # Prey detection (within vision)
                 can_attack = org.genome.get_dominant_allele('can_attack') > 127
                 if can_attack and other.body.total_cells < body.total_cells * 0.7:
@@ -311,7 +349,7 @@ class Simulation:
             'maturity_ticks': maturity,
         }
 
-    def _execute_action(self, org: Organism, action: dict, ctx: dict):
+    def _execute_action(self, org: Organism, action: dict, ctx: dict, living_now: list = None):
         """
         Execute the chosen action. Returns 'dead', Organism (newborn), or None.
         """
@@ -389,7 +427,24 @@ class Simulation:
                     dz = org.state.z - prey.state.z
                     dist = (dx*dx + dy*dy + dz*dz) ** 0.5
                     if dist <= 1.5:
-                        self._attack(org, prey)
+                        # armor gene reduces calorie gain (prey absorbs up to 60% damage)
+                        armor_factor = 1.0 - prey.genome.phenotype('armor') * 0.6
+                        cal_gain = prey.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor
+                        # pack_instinct: +50% bonus if a pack-mate recently attacked this prey
+                        if org.genome.get_dominant_allele('pack_instinct') > 127:
+                            # check if another living predator is within 5 cells of prey
+                            px, py = prey.state.x, prey.state.y
+                            for other in living_now:
+                                if other is not org and other.is_alive and other.genome.get_dominant_allele('can_attack') > 127:
+                                    od = abs(other.state.x - px) + abs(other.state.y - py)
+                                    if od <= 5:
+                                        cal_gain *= 1.5
+                                        break
+                        state.calories = min(body.calorie_capacity, state.calories + cal_gain)
+                        # toxicity: if prey is toxic, attacker loses 20 cal
+                        if prey.genome.get_dominant_allele('toxicity') > 127:
+                            state.calories = max(0, state.calories - 20)
+                        prey.state.alive = False
 
         elif atype == 'surface':
             # Move toward higher z (out of water)
@@ -541,9 +596,9 @@ class Simulation:
         """Create offspring. Genome determines sexual vs asexual.
         Baby starts with 80% of the calories invested by the parent(s),
         capped at its own calorie capacity.
-        Returns None immediately if the population cap (1000) is reached.
+        Returns None immediately if the population cap (400) is reached.
         """
-        if self.pool.count() >= 1000:
+        if self.pool.count() >= 400:
             return None
         mode = org.genome.get_dominant_allele('reproduction_mode')
 
