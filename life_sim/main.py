@@ -27,7 +27,8 @@ def build_c_extensions():
 
 def main():
     parser = argparse.ArgumentParser(description='Dennis Life Simulator')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed (default: 42)')
+    parser.add_argument('--seed', type=int, default=None, help='Random seed (random if omitted)')
+    parser.add_argument('--count', type=int, default=None, help='Initial organism count')
     parser.add_argument('--no-build-ext', action='store_true', help='Skip C extension build')
     parser.add_argument('--headless', action='store_true',
                         help='Run headless (no UI) for N ticks then exit')
@@ -38,10 +39,23 @@ def main():
     if not args.no_build_ext:
         build_c_extensions()
 
+    # Interactive prompts (skip if values were passed as CLI args)
+    import random as _rnd
+
+    seed = args.seed
+    if seed is None:
+        raw = input("Random seed [Enter for random]: ").strip()
+        seed = int(raw) if raw else _rnd.randint(0, 999999)
+
+    count = args.count
+    if count is None:
+        raw = input("Initial organism count [100]: ").strip()
+        count = int(raw) if raw else 100
+
     from life_sim.engine.simulation import Simulation
 
-    print(f"Initializing simulation (seed={args.seed})...")
-    sim = Simulation(seed=args.seed)
+    print(f"Initializing simulation (seed={seed}, organisms={count})...")
+    sim = Simulation(seed=seed, initial_count=count)
     print(f"World generated. {sim.pool.count()} starter organisms placed.")
 
     if args.headless:

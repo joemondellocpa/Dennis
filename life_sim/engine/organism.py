@@ -38,6 +38,10 @@ class OrganismState:
         'threat_timer',
         'mate_timer',
         'last_ate_tick',
+        # Cached food scan — refreshed every FOOD_SCAN_INTERVAL ticks
+        '_cached_food_pos',
+        '_cached_food_dist',
+        '_food_scan_tick',
     ]
 
     def __init__(self, x: int, y: int, z: int, calories: float):
@@ -53,6 +57,9 @@ class OrganismState:
         self.threat_timer: int = 0
         self.mate_timer: int = 0
         self.last_ate_tick: int = 0
+        self._cached_food_pos = None
+        self._cached_food_dist: float = float('inf')
+        self._food_scan_tick: int = -999  # force scan on first tick
 
     def __repr__(self) -> str:
         return (

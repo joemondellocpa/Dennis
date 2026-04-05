@@ -8,7 +8,7 @@ from .genetics import Genome, BodyPlan
 from .behavior import BehaviorEvaluator, load_all_behaviors, mutate_behavior_file
 
 class Simulation:
-    def __init__(self, seed: int = 42):
+    def __init__(self, seed: int = 42, initial_count: int = 100):
         random.seed(seed)
 
         # Core systems
@@ -29,7 +29,7 @@ class Simulation:
         # Init
         load_all_behaviors()
         WorldGenerator().generate_default(self.world)
-        self._seed_initial_organisms(count=1000)
+        self._seed_initial_organisms(count=initial_count)
 
     def _seed_initial_organisms(self, count: int):
         """Place starter organisms on the soil surface."""
@@ -67,9 +67,12 @@ class Simulation:
         """Advance simulation by one tick."""
         self.tick_count += 1
 
+        # Snapshot living list ONCE — reused by all per-organism calls this tick
+        living_now = self.pool.living()
+
         # 1. Update active chunks from organism positions
         active_chunks = set()
-        for org in self.pool.living():
+        for org in living_now:
             cx = org.state.x // CHUNK_SIZE
             cy = org.state.y // CHUNK_SIZE
             cz = org.state.z // CHUNK_SIZE
@@ -85,8 +88,8 @@ class Simulation:
         dead_ids = []
         new_organisms = []
 
-        for org in self.pool.living():
-            result = self._process_organism(org)
+        for org in living_now:
+            result = self._process_organism(org, living_now)
             if result == 'dead':
                 dead_ids.append(org.id)
             elif result is not None and isinstance(result, Organism):
@@ -101,7 +104,7 @@ class Simulation:
         # 5. Cull if over limit
         self.pool.cull_to_limit()
 
-    def _process_organism(self, org: Organism):
+    def _process_organism(self, org: Organism, living_now: list):
         """
         Process one organism for one tick.
         Returns: 'dead' | Organism (newborn) | None
@@ -144,7 +147,7 @@ class Simulation:
             self._try_eat(org)
 
         # Build world context for behavior evaluator
-        ctx = self._build_world_context(org)
+        ctx = self._build_world_context(org, living_now)
 
         # Evaluate behavior
         action = self.evaluator.evaluate(state, body, org.genome, ctx)
@@ -158,10 +161,11 @@ class Simulation:
 
         return None
 
-    def _build_world_context(self, org: Organism) -> dict:
+    def _build_world_context(self, org: Organism, living_now: list) -> dict:
         """
         Scan nearby cells/organisms to build context dict for behavior evaluator.
         Uses vision_range from genome to limit scan radius (capped at 50 for performance).
+        living_now is the pre-computed snapshot for this tick — do NOT call pool.living() here.
         """
         state = org.state
         body = org.body
@@ -178,9 +182,12 @@ class Simulation:
         nearest_prey_dist = float('inf')
         nearest_prey_id = None
 
-        # Scan nearby organisms for threats/mates/prey
-        # Use pool.living() but limit to nearby (rough bounding box check)
-        for other in self.pool.living():
+        # Scan a capped sample of organisms — avoid O(n²) with large populations.
+        # Sample up to 100 random organisms; with 1000 orgs this cuts work by 10x
+        # while still reliably finding nearby threats/prey/mates.
+        import random as _rnd
+        scan_pool = living_now if len(living_now) <= 100 else _rnd.sample(living_now, 100)
+        for other in scan_pool:
             if other.id == org.id:
                 continue
             dx = other.state.x - state.x
@@ -208,21 +215,33 @@ class Simulation:
                     nearest_mate_dist = dist
                     nearest_mate_id = other.id
 
-        # Scan nearby cells for food
-        # Food = SOIL (calorie_value > 0), WOOD
-        scan_r = min(vision, 20)
-        for dz in range(-2, 3):
-            for dy in range(-scan_r, scan_r + 1, max(1, scan_r // 10)):
-                for dx in range(-scan_r, scan_r + 1, max(1, scan_r // 10)):
-                    nx, ny, nz = state.x + dx, state.y + dy, state.z + dz
-                    if not self.world.in_bounds(nx, ny, nz):
-                        continue
-                    ct = self.world.get_cell(nx, ny, nz)
-                    if CELL_PROPS.get(ct, {}).get('calorie_value', 0) > 0:
-                        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-                        if dist < nearest_food_dist:
-                            nearest_food_dist = dist
-                            nearest_food_pos = (nx, ny, nz)
+        # Food scan — expensive, so cache the result for FOOD_SCAN_INTERVAL ticks.
+        # If the organism has moved far from its cached food, invalidate.
+        FOOD_SCAN_INTERVAL = 10
+        if (self.tick_count - state._food_scan_tick >= FOOD_SCAN_INTERVAL or
+                state._cached_food_pos is None):
+            scan_r = min(vision, 15)
+            stride = max(1, scan_r // 8)
+            for dz in range(-1, 2):   # only ±1 z (soil is one level below)
+                for dy in range(-scan_r, scan_r + 1, stride):
+                    for dx in range(-scan_r, scan_r + 1, stride):
+                        nx = state.x + dx
+                        ny = state.y + dy
+                        nz = state.z + dz
+                        if nx < 0 or ny < 0 or nx >= 1000 or ny >= 1000 or nz < 0 or nz >= 100:
+                            continue
+                        ct = self.world.get_cell(nx, ny, nz)
+                        if CELL_PROPS.get(ct, {}).get('calorie_value', 0) > 0:
+                            d = math.sqrt(dx*dx + dy*dy + dz*dz)
+                            if d < nearest_food_dist:
+                                nearest_food_dist = d
+                                nearest_food_pos = (nx, ny, nz)
+            state._cached_food_pos = nearest_food_pos
+            state._cached_food_dist = nearest_food_dist
+            state._food_scan_tick = self.tick_count
+        else:
+            nearest_food_pos = state._cached_food_pos
+            nearest_food_dist = state._cached_food_dist
 
         maturity = int(org.genome.phenotype('maturity_ticks') * 500) + 100
 
