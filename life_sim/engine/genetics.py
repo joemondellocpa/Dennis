@@ -22,6 +22,7 @@ class Genome:
         'can_swim',
         'can_climb',
         'can_float',
+        'can_attack',   # >127 = can kill organisms smaller than self
         # Metabolism
         'metabolism_rate',
         'calorie_efficiency',

@@ -23,15 +23,18 @@ class Simulation:
         self.paused = False
         self.species_counter = 0
 
+        # Species registry: species_id -> {'genome_snapshot': Genome, 'first_tick': int, 'extinct_tick': int|None}
+        self.species_registry: dict = {}
+
         # Init
         load_all_behaviors()
         WorldGenerator().generate_default(self.world)
-        self._seed_initial_organisms(count=50)
+        self._seed_initial_organisms(count=1000)
 
     def _seed_initial_organisms(self, count: int):
         """Place starter organisms on the soil surface."""
         # Find the surface z for random x,y positions and place organisms there
-        for _ in range(count):
+        for i in range(count):
             x = random.randint(0, WORLD_W - 1)
             y = random.randint(0, WORLD_H - 1)
             # Find surface: highest z that is not AIR
@@ -42,7 +45,16 @@ class Simulation:
             org = Organism(genome, x, y, z + 1, species_id=self.species_counter)
             self.species_counter += 1
             org.state.calories = org.body.calorie_capacity * 0.9
+            if i % 10 == 0:
+                # Bias toward predator — give can_attack dominant allele
+                org.genome._alleles['can_attack'] = (200, 210)
+                org.body = BodyPlan(org.genome)  # recompute body with updated genome
             self.pool.add(org)
+            self.species_registry[org.species_id] = {
+                'genome_snapshot': org.genome,
+                'first_tick': 0,
+                'extinct_tick': None,
+            }
 
     def _find_surface_z(self, x, y) -> int | None:
         """Return z of the highest non-AIR cell at (x,y), or None if all air."""
@@ -163,8 +175,10 @@ class Simulation:
         nearest_food_pos = None
         nearest_mate_dist = float('inf')
         nearest_mate_id = None
+        nearest_prey_dist = float('inf')
+        nearest_prey_id = None
 
-        # Scan nearby organisms for threats/mates
+        # Scan nearby organisms for threats/mates/prey
         # Use pool.living() but limit to nearby (rough bounding box check)
         for other in self.pool.living():
             if other.id == org.id:
@@ -176,10 +190,17 @@ class Simulation:
             if dist > vision:
                 continue
 
-            # Threat: larger organism is a threat
-            if other.body.total_cells > body.total_cells * 1.5:
+            # Threat: other can attack us and is big enough to be dangerous
+            can_attack_me = other.genome.get_dominant_allele('can_attack') > 127
+            if can_attack_me and other.body.total_cells > body.total_cells * 0.7:
                 if dist < nearest_threat_dist:
                     nearest_threat_dist = dist
+            # Prey: we can attack and other is small enough
+            can_attack = org.genome.get_dominant_allele('can_attack') > 127
+            if can_attack and other.body.total_cells < body.total_cells * 0.7:
+                if dist < nearest_prey_dist:
+                    nearest_prey_dist = dist
+                    nearest_prey_id = other.id
             # Mate: same species, different id, mature
             elif (other.genome.get_dominant_allele('reproduction_mode') >= 128 and
                   other.state.age >= other.body.__class__.__dict__.get('maturity_ticks', 100)):
@@ -213,6 +234,8 @@ class Simulation:
             'nearest_food_pos': nearest_food_pos,
             'nearest_mate_dist': nearest_mate_dist,
             'nearest_mate_id': nearest_mate_id,
+            'nearest_prey_dist': nearest_prey_dist,
+            'nearest_prey_id': nearest_prey_id,
             'in_water': state.in_water,
             'has_lung': body.has_lung,
             'has_gill': body.has_gill,
@@ -285,6 +308,21 @@ class Simulation:
                     baby = self._reproduce(org, ctx, invested_calories=repro_cost)
                     if baby:
                         return baby
+
+        elif atype == 'hunt':
+            prey_id = ctx.get('nearest_prey_id')
+            if prey_id:
+                prey = self.pool.organisms.get(prey_id)
+                if prey and prey.is_alive:
+                    tx, ty, tz = prey.state.x, prey.state.y, prey.state.z
+                    self._move_toward(org, tx, ty, tz, speed_mul)
+                    # If now adjacent (dist <= 1.5), attack
+                    dx = org.state.x - prey.state.x
+                    dy = org.state.y - prey.state.y
+                    dz = org.state.z - prey.state.z
+                    dist = (dx*dx + dy*dy + dz*dz) ** 0.5
+                    if dist <= 1.5:
+                        self._attack(org, prey)
 
         elif atype == 'surface':
             # Move toward higher z (out of water)
@@ -416,6 +454,22 @@ class Simulation:
                 state.calories -= org.body.calorie_cost_per_tick * 3  # digging costs energy
                 break
 
+    def _attack(self, attacker: Organism, prey: Organism):
+        """Attacker kills prey and gains calories from it."""
+        can_attack = attacker.genome.get_dominant_allele('can_attack') > 127
+        if not can_attack:
+            return
+        if attacker.body.total_cells <= prey.body.total_cells * 0.7:
+            return  # prey too big
+        # Kill prey, attacker gains prey's calories
+        calorie_gain = prey.state.calories * attacker.genome.phenotype('calorie_efficiency')
+        attacker.state.calories = min(
+            attacker.body.calorie_capacity,
+            attacker.state.calories + calorie_gain
+        )
+        prey.state.alive = False
+        self.pool.remove(prey.id)
+
     def _reproduce(self, org: Organism, ctx: dict, invested_calories: float = 50):
         """Create offspring. Genome determines sexual vs asexual.
         Baby starts with 80% of the calories invested by the parent(s),
@@ -445,6 +499,13 @@ class Simulation:
                         baby.body.calorie_capacity,
                         invested_calories * 0.8
                     )
+                    # Register new species if not already known
+                    if baby.species_id not in self.species_registry:
+                        self.species_registry[baby.species_id] = {
+                            'genome_snapshot': baby.genome,
+                            'first_tick': self.tick_count,
+                            'extinct_tick': None,
+                        }
                     return baby
         return None
 
@@ -455,3 +516,26 @@ class Simulation:
             'organisms': self.pool.count(),
             'paused': self.paused,
         }
+
+    def get_species_stats(self) -> list:
+        """Return per-species stats sorted by population desc, then extinct ones after."""
+        living = self.pool.living()
+        pop_counts = {}
+        for org in living:
+            pop_counts[org.species_id] = pop_counts.get(org.species_id, 0) + 1
+
+        result = []
+        for sid, info in self.species_registry.items():
+            pop = pop_counts.get(sid, 0)
+            if pop == 0 and info['extinct_tick'] is None:
+                info['extinct_tick'] = self.tick_count
+            result.append({
+                'species_id': sid,
+                'population': pop,
+                'extinct': pop == 0,
+                'extinct_tick': info['extinct_tick'],
+                'first_tick': info['first_tick'],
+                'genome': info['genome_snapshot'],
+            })
+        result.sort(key=lambda x: (-x['population'], x['species_id']))
+        return result

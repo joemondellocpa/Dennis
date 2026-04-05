@@ -151,4 +151,6 @@ class BehaviorEvaluator:
             return (ctx['in_water'] and ctx['has_lung']) or (not ctx['in_water'] and ctx['has_gill'])
         elif ct == 'mate_nearby':
             return ctx['nearest_mate_dist'] <= p
+        elif ct == 'prey_nearby':
+            return ctx.get('nearest_prey_dist', float('inf')) <= p
         return False

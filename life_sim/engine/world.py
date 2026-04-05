@@ -121,7 +121,7 @@ class WorldGenerator:
     # z 26+                 -> AIR
 
     AIR_POCKET_PROB = 0.08  # probability a cell in the pocket zone becomes AIR
-    WATER_POOL_COUNT = 40   # number of water pools to scatter
+    WATER_POOL_COUNT = 80   # number of water pools to scatter
     WATER_POOL_RADIUS = 3   # radius of each water pool (in cells)
     OUTCROP_COUNT = 30      # number of stone outcroppings
     WOOD_PATCH_COUNT = 200  # food plants scattered on soil surface
@@ -131,6 +131,7 @@ class WorldGenerator:
         self._fill_layers(world)
         self._add_water_pools(world)
         self._add_stone_outcroppings(world)
+        self._add_central_lake(world)
         self._add_wood_patches(world)
 
     # ------------------------------------------------------------------
@@ -190,6 +191,30 @@ class WorldGenerator:
                         y = cy_center + dy
                         if world.get_cell(x, y, surface_z) == int(CellType.AIR):
                             world.set_cell(x, y, surface_z, int(CellType.WATER))
+
+    # ------------------------------------------------------------------
+    # Central lake (guaranteed large body of water)
+    # ------------------------------------------------------------------
+
+    def _add_central_lake(self, world: World):
+        """Place a guaranteed large lake near the world centre."""
+        cx = WORLD_W // 2 + random.randint(-50, 50)
+        cy = WORLD_H // 2 + random.randint(-50, 50)
+        radius = random.randint(20, 35)
+        # Find typical surface z at centre
+        surface_z = self.SOIL_TOP + 1  # z=21, reliable soil surface
+        for r_step in range(radius + 1):
+            for dx in range(-r_step, r_step + 1):
+                for dy in range(-r_step, r_step + 1):
+                    if dx * dx + dy * dy <= radius * radius:
+                        x, y = cx + dx, cy + dy
+                        if not world.in_bounds(x, y, surface_z):
+                            continue
+                        # Carve a basin: set surface z and one below to water
+                        world.set_cell(x, y, surface_z, int(CellType.WATER))
+                        # Also set z-1 to water (deeper lake)
+                        if world.in_bounds(x, y, surface_z - 1):
+                            world.set_cell(x, y, surface_z - 1, int(CellType.WATER))
 
     # ------------------------------------------------------------------
     # Wood patches (surface food)

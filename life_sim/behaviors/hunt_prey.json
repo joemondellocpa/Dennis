@@ -1,0 +1,15 @@
+{
+  "id": "hunt_prey",
+  "name": "Hunt Prey",
+  "priority": 75,
+  "condition": {
+    "type": "prey_nearby",
+    "param": 30
+  },
+  "action": {
+    "type": "hunt",
+    "speed_multiplier": 1.5,
+    "calorie_multiplier": 1.3,
+    "param": 0
+  }
+}
