@@ -71,7 +71,7 @@ class AsciiUI:
         self.cursor_y = 0
         self.selected_organism = None  # Organism or None
         self.selected_cell = None      # (x, y, z, cell_type) or None
-        self._tab_index: int = 0       # index for Tab organism cycling
+        self._tab_org_id: int = -1     # id of last-tabbed-to organism (ID-stable cycling)
 
         # Simulation speed
         self.ticks_per_frame = 1  # how many ticks to run before re-rendering
@@ -182,15 +182,21 @@ class AsciiUI:
             self.view_z = max(self.view_z - 1, 0)
             return False
 
-        # --- Tab: cycle through organisms ---
+        # --- Tab: cycle through organisms (ID-stable — survives births/deaths) ---
         if key in (ord('\t'), curses.KEY_BTAB):
             living = sorted(self.pool.living(), key=lambda o: o.id)
             if living:
+                ids = [o.id for o in living]
+                try:
+                    current_idx = ids.index(self._tab_org_id)
+                except ValueError:
+                    current_idx = -1
                 if key == curses.KEY_BTAB:
-                    self._tab_index = (self._tab_index - 1) % len(living)
+                    new_idx = (current_idx - 1) % len(living)
                 else:
-                    self._tab_index = (self._tab_index + 1) % len(living)
-                org = living[self._tab_index]
+                    new_idx = (current_idx + 1) % len(living)
+                org = living[new_idx]
+                self._tab_org_id = org.id
                 self.view_x = max(0, org.state.x - view_w // 2)
                 self.view_y = max(0, org.state.y - view_h // 2)
                 self.view_z = org.state.z
@@ -335,8 +341,18 @@ class AsciiUI:
                     color = curses.color_pair(color_idx) if color_idx else 0
 
                 # Draw cursor highlight in selection mode
-                if self.selection_mode and world_x == self.cursor_x and world_y == self.cursor_y:
-                    color |= curses.A_BLINK
+                if self.selection_mode:
+                    if world_x == self.cursor_x and world_y == self.cursor_y:
+                        # Bright yellow reverse block — always visible regardless of cell type
+                        try:
+                            self.stdscr.addch(screen_y, screen_x, ch,
+                                              curses.color_pair(3) | curses.A_REVERSE | curses.A_BOLD)
+                        except curses.error:
+                            pass
+                        continue
+                    elif world_x == self.cursor_x or world_y == self.cursor_y:
+                        # Crosshair: dim yellow tint on the cursor row/column
+                        color = curses.color_pair(3)
 
                 try:
                     self.stdscr.addch(screen_y, screen_x, ch, color)
@@ -408,10 +424,31 @@ class AsciiUI:
             put("[ Info Panel ]", title_attr)
             put("")
             if self.selection_mode:
-                put(" SELECTION MODE", curses.color_pair(3) | curses.A_BOLD)
-                put(" Move cursor: arrows")
-                put(" Confirm:     Enter")
-                put(" Cancel:      Esc")
+                put("[ Selection Mode ]", curses.color_pair(3) | curses.A_BOLD)
+                put(f" ({self.cursor_x}, {self.cursor_y}, {self.view_z})")
+                put("")
+                # Live preview of what's under the cursor
+                cx, cy = self.cursor_x, self.cursor_y
+                under_org = None
+                for org in self.pool.living():
+                    if (org.state.x == cx and org.state.y == cy
+                            and org.state.z == self.view_z):
+                        under_org = org
+                        break
+                if under_org:
+                    put(" Under cursor:", curses.color_pair(6))
+                    put(f"  Organism {hex(under_org.id)[-6:]}")
+                    put(f"  Age:  {under_org.state.age}")
+                    put(f"  Cal:  {under_org.state.calories:.0f}")
+                    put(f"  Size: {under_org.body.total_cells}")
+                else:
+                    ct = self.world.get_cell(cx, cy, self.view_z)
+                    cell_name = CELL_NAMES.get(ct, '?')
+                    put(" Under cursor:", curses.color_pair(6))
+                    put(f"  {cell_name}")
+                put("")
+                put(" Enter: confirm")
+                put(" Esc:   cancel")
             else:
                 put(" Arrow keys: scroll")
                 put(" s:          select")
