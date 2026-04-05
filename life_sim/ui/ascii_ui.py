@@ -30,20 +30,25 @@ WORLD_W = 1000
 WORLD_H = 1000
 WORLD_D = 100
 
+MINIMAP_W = 26
+MINIMAP_H = 12
+
 HELP_LINES = [
     " KEY BINDINGS ",
     "",
-    " Arrow keys  Scroll viewport",
-    " +/=         Go up one z-level",
-    " -           Go down one z-level",
-    " s           Enter selection mode",
-    " Enter       Select cell/organism",
-    " Esc         Cancel selection",
-    " Space       Pause / unpause",
-    " >           Increase speed",
-    " <           Decrease speed",
-    " h           Toggle this help",
-    " q           Quit",
+    " Arrow keys      Scroll viewport",
+    " +/=             Go up one z-level",
+    " -               Go down one z-level",
+    " s               Enter selection mode",
+    " Enter           Select cell/organism",
+    " Esc             Cancel selection",
+    " Space           Pause / unpause",
+    " >               Increase speed",
+    " <               Decrease speed",
+    " Tab             Cycle to next organism",
+    " Shift+Tab       Cycle to prev organism",
+    " h               Toggle this help",
+    " q               Quit",
     "",
     " Press any key to close ",
 ]
@@ -66,6 +71,7 @@ class AsciiUI:
         self.cursor_y = 0
         self.selected_organism = None  # Organism or None
         self.selected_cell = None      # (x, y, z, cell_type) or None
+        self._tab_index: int = 0       # index for Tab organism cycling
 
         # Simulation speed
         self.ticks_per_frame = 1  # how many ticks to run before re-rendering
@@ -96,6 +102,8 @@ class AsciiUI:
         curses.curs_set(0)
         stdscr.nodelay(True)   # non-blocking input
         stdscr.timeout(50)     # 50 ms timeout for getch
+
+        self._center_on_first_organism()
 
         while self.sim.running:
             # Process input
@@ -172,6 +180,21 @@ class AsciiUI:
             return False
         if key == ord('-'):
             self.view_z = max(self.view_z - 1, 0)
+            return False
+
+        # --- Tab: cycle through organisms ---
+        if key in (ord('\t'), curses.KEY_BTAB):
+            living = sorted(self.pool.living(), key=lambda o: o.id)
+            if living:
+                if key == curses.KEY_BTAB:
+                    self._tab_index = (self._tab_index - 1) % len(living)
+                else:
+                    self._tab_index = (self._tab_index + 1) % len(living)
+                org = living[self._tab_index]
+                self.view_x = max(0, org.state.x - view_w // 2)
+                self.view_y = max(0, org.state.y - view_h // 2)
+                self.view_z = org.state.z
+                self.selected_organism = org
             return False
 
         # --- Toggle selection mode ---
@@ -392,11 +415,14 @@ class AsciiUI:
             else:
                 put(" Arrow keys: scroll")
                 put(" s:          select")
+                put(" Tab:        next org")
                 put(" Space:      pause")
                 put(" +/-:        z level")
                 put(" >/<:        speed")
                 put(" h:          help")
                 put(" q:          quit")
+
+        self._render_minimap(panel_x, panel_h)
 
     def _render_status_bar(self, row: int, width: int):
         """Render bottom status bar."""
@@ -478,3 +504,103 @@ class AsciiUI:
                 self.stdscr.addstr(bot_y, start_x, bot_line[:w - start_x], attr_box)
             except curses.error:
                 pass
+
+    # ------------------------------------------------------------------
+    # Initial viewport centering
+    # ------------------------------------------------------------------
+
+    def _center_on_first_organism(self):
+        """Center the viewport on the first living organism at startup."""
+        h, w = self.stdscr.getmaxyx()
+        view_w = w - self.info_panel_width - 1
+        view_h = h - 2
+        living = self.pool.living()
+        if living:
+            org = living[0]
+            self.view_x = max(0, org.state.x - view_w // 2)
+            self.view_y = max(0, org.state.y - view_h // 2)
+            self.view_z = org.state.z
+        else:
+            self.view_x = max(0, WORLD_W // 2 - view_w // 2)
+            self.view_y = max(0, WORLD_H // 2 - view_h // 2)
+            self.view_z = 26
+
+    # ------------------------------------------------------------------
+    # Minimap
+    # ------------------------------------------------------------------
+
+    def _render_minimap(self, panel_x: int, panel_h: int):
+        """Render a small overview map at the bottom of the info panel."""
+        map_start_row = panel_h - MINIMAP_H - 1
+        if map_start_row < 1:
+            return
+
+        scale_x = WORLD_W / MINIMAP_W
+        scale_y = WORLD_H / MINIMAP_H
+
+        # Build grid of (char, attr) — terrain layer
+        grid_ch   = [[' '] * MINIMAP_W for _ in range(MINIMAP_H)]
+        grid_attr = [[0]   * MINIMAP_W for _ in range(MINIMAP_H)]
+
+        for my in range(MINIMAP_H):
+            for mx in range(MINIMAP_W):
+                wx = int(mx * scale_x)
+                wy = int(my * scale_y)
+                cell = self.world.get_cell(wx, wy, self.view_z)
+                ch, color_idx = CELL_CHARS.get(cell, (' ', 0))
+                grid_ch[my][mx] = ch
+                grid_attr[my][mx] = curses.color_pair(color_idx) if color_idx else 0
+
+        # Organism dots (cap at 200 to stay fast)
+        org_attr = curses.color_pair(3)  # yellow
+        for org in self.pool.living()[:200]:
+            mx = min(MINIMAP_W - 1, int(org.state.x / scale_x))
+            my = min(MINIMAP_H - 1, int(org.state.y / scale_y))
+            grid_ch[my][mx] = '*'
+            grid_attr[my][mx] = org_attr
+
+        # Viewport rectangle (drawn on top of terrain/orgs)
+        h, w = self.stdscr.getmaxyx()
+        vw = w - self.info_panel_width - 1
+        vh = h - 2
+        vp_x0 = max(0, min(int(self.view_x / scale_x), MINIMAP_W - 1))
+        vp_y0 = max(0, min(int(self.view_y / scale_y), MINIMAP_H - 1))
+        vp_x1 = max(0, min(int((self.view_x + vw) / scale_x), MINIMAP_W - 1))
+        vp_y1 = max(0, min(int((self.view_y + vh) / scale_y), MINIMAP_H - 1))
+        vp_attr = curses.color_pair(7) | curses.A_BOLD
+
+        if vp_x0 == vp_x1 or vp_y0 == vp_y1:
+            grid_ch[vp_y0][vp_x0] = '+'
+            grid_attr[vp_y0][vp_x0] = vp_attr
+        else:
+            for mx in range(vp_x0, vp_x1 + 1):
+                grid_ch[vp_y0][mx] = '-'; grid_attr[vp_y0][mx] = vp_attr
+                grid_ch[vp_y1][mx] = '-'; grid_attr[vp_y1][mx] = vp_attr
+            for my in range(vp_y0, vp_y1 + 1):
+                grid_ch[my][vp_x0] = '|'; grid_attr[my][vp_x0] = vp_attr
+                grid_ch[my][vp_x1] = '|'; grid_attr[my][vp_x1] = vp_attr
+            for corner_y, corner_x in [(vp_y0, vp_x0), (vp_y0, vp_x1),
+                                        (vp_y1, vp_x0), (vp_y1, vp_x1)]:
+                grid_ch[corner_y][corner_x] = '+'
+                grid_attr[corner_y][corner_x] = vp_attr
+
+        # Title
+        title = f"[Map z={self.view_z}]"
+        try:
+            self.stdscr.addstr(map_start_row, panel_x,
+                               title[:self.info_panel_width],
+                               curses.color_pair(3) | curses.A_BOLD)
+        except curses.error:
+            pass
+
+        # Draw grid rows
+        for my in range(MINIMAP_H):
+            screen_row = map_start_row + 1 + my
+            if screen_row >= panel_h:
+                break
+            for mx in range(MINIMAP_W):
+                try:
+                    self.stdscr.addch(screen_row, panel_x + mx,
+                                      grid_ch[my][mx], grid_attr[my][mx])
+                except curses.error:
+                    pass
