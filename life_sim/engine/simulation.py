@@ -57,73 +57,153 @@ class Simulation:
         self._seed_initial_organisms(count=initial_count)
 
     def _seed_initial_organisms(self, count: int):
-        """Place starter organisms on the soil surface.
+        """Seed 7 distinct founding species, each with multiple members.
 
-        Size distribution is intentionally skewed toward small organisms so the
-        ecosystem starts with abundant prey and a few large predators:
-          50% tiny  (size 1–5):  cheap, fast, eat soil — the base of the food chain
-          30% small (size 5–15): generalist survivors
-          15% medium(size 15–30): emerging predators / large herbivores
-           5% large (size 30–50): apex predators, seed the predation niche early
+        Each archetype has a fixed genome template tuned for a different ecological niche.
+        Members of the same archetype share a species_id and cluster near each other so
+        they can find mates.  Spawning_density controls cluster tightness.
         """
-        # Cluster-based spawning: density 1 = spread, density 5 = tight clusters
-        # Choose a set of cluster centers, then spawn each organism near one
         import math as _math
-        n_clusters = max(2, count // 8)
-        cluster_centers = [
-            (random.randint(50, WORLD_W - 50), random.randint(50, WORLD_H - 50))
-            for _ in range(n_clusters)
+
+        # 7 ecological archetypes: (name, size_range, gene_overrides)
+        # size values are dominant allele (0-255 → 1-50 cells)
+        ARCHETYPES = [
+            # name,           size_dom, size_rec, overrides
+            ('grazer',        20, 10, {
+                'can_attack':       (30, 15),
+                'flock_behavior':   (200, 180),
+                'metabolism_rate':  (60, 40),
+                'lung_ratio':       (200, 180),
+                'reproduction_mode':(60, 40),   # mostly asexual
+            }),
+            ('herd_grazer',   35, 20, {
+                'can_attack':       (25, 10),
+                'flock_behavior':   (220, 200),
+                'metabolism_rate':  (80, 60),
+                'lung_ratio':       (210, 190),
+                'reproduction_mode':(180, 160), # sexual
+                'gender':           (200, 180), # seed Gender B — pairs formed below
+            }),
+            ('digger',        50, 30, {
+                'can_dig':          (220, 200),
+                'burrow_speed':     (210, 180),
+                'can_attack':       (40, 20),
+                'lung_ratio':       (190, 170),
+                'metabolism_rate':  (100, 80),
+                'reproduction_mode':(70, 50),
+            }),
+            ('swimmer',       40, 20, {
+                'can_swim':         (220, 200),
+                'lung_ratio':       (40, 20),   # gill breathers
+                'can_attack':       (35, 15),
+                'flock_behavior':   (160, 140),
+                'reproduction_mode':(160, 140), # sexual
+                'gender':           (200, 180),
+            }),
+            ('pack_hunter',   90, 70, {
+                'can_attack':       (200, 180),
+                'pack_instinct':    (210, 190),
+                'flock_behavior':   (180, 160),
+                'sprint_speed':     (160, 140),
+                'lung_ratio':       (200, 180),
+                'reproduction_mode':(170, 150), # sexual
+                'gender':           (200, 180),
+            }),
+            ('apex_predator', 180, 140, {
+                'can_attack':       (240, 220),
+                'sprint_speed':     (200, 180),
+                'armor':            (160, 140),
+                'vision_range':     (200, 180),
+                'lung_ratio':       (200, 180),
+                'reproduction_mode':(50, 30),   # asexual (slow, rare)
+                'flock_behavior':   (30, 10),   # solitary
+            }),
+            ('toxic_crawler', 15, 5, {
+                'toxicity':         (220, 200),
+                'color_r':          (255, 240),
+                'color_g':          (120, 80),
+                'color_b':          (0, 0),
+                'can_attack':       (20, 10),
+                'metabolism_rate':  (40, 20),
+                'lung_ratio':       (180, 160),
+                'reproduction_mode':(80, 60),
+            }),
         ]
-        # Cluster radius: density 1 → whole map, density 5 → 60 cells
-        cluster_radius = int(500 / (self.spawning_density ** 0.8))
 
-        for i in range(count):
-            cx, cy = random.choice(cluster_centers)
-            x = max(0, min(WORLD_W - 1, cx + random.randint(-cluster_radius, cluster_radius)))
-            y = max(0, min(WORLD_H - 1, cy + random.randint(-cluster_radius, cluster_radius)))
-            z = self._find_surface_z(x, y)
-            if z is None:
-                continue
-            genome = Genome.random_genome()
+        n_archetypes = len(ARCHETYPES)
+        # Distribute count evenly, with extra organisms going to small prey species
+        # Weights: grazers and diggers get more; apex gets fewer
+        weights = [3, 3, 2, 2, 2, 1, 2]  # relative sizes
+        total_w = sum(weights)
+        archetype_counts = [max(8, round(count * w / total_w)) for w in weights]
 
-            # Biased size distribution — size gene dominant allele controls size tier
-            size_roll = random.random()
-            if size_roll < 0.50:               # tiny  (1-5 cells)
-                sv = random.randint(1, 26)
-            elif size_roll < 0.80:             # small (5-15 cells)
-                sv = random.randint(27, 77)
-            elif size_roll < 0.95:             # medium (15-30 cells)
-                sv = random.randint(78, 153)
-            else:                              # large (30-50 cells)
-                sv = random.randint(154, 255)
-            genome._alleles['size'] = (sv, random.randint(0, sv))
+        # Cluster radius from spawning_density
+        cluster_radius = int(400 / (self.spawning_density ** 0.8))
 
-            # Seed predator/prey roles explicitly:
-            # top 5% = apex predators, next 15% = medium predators, rest = prey/herbivores
-            if size_roll >= 0.95:
-                genome._alleles['can_attack'] = (random.randint(200, 255), random.randint(160, 220))
-            elif size_roll >= 0.80:
-                genome._alleles['can_attack'] = (random.randint(140, 200), random.randint(100, 170))
-            else:
-                genome._alleles['can_attack'] = (random.randint(0, 90), random.randint(0, 70))
-                genome._alleles['flock_behavior'] = (random.randint(128, 220), random.randint(100, 200))
-
-            # Bias lung/gill to match spawn terrain
-            spawn_cell = self.world.get_cell(x, y, z - 1)
-            if spawn_cell == CellType.WATER:
-                genome._alleles['lung_ratio'] = (random.randint(0, 80), random.randint(0, 80))
-            else:
-                genome._alleles['lung_ratio'] = (random.randint(150, 255), random.randint(150, 255))
-
-            org = Organism(genome, x, y, z + 1, species_id=self.species_counter)
+        for arch_idx, (arch_name, size_dom, size_rec, overrides) in enumerate(ARCHETYPES):
+            arch_count = archetype_counts[arch_idx]
+            species_id = self.species_counter
             self.species_counter += 1
-            org.state.calories = org.body.calorie_capacity * 0.9
-            self.pool.add(org)
-            self.species_registry[org.species_id] = {
-                'genome_snapshot': org.genome,
+
+            # Pick a cluster center for this species
+            cx = random.randint(80, WORLD_W - 80)
+            cy = random.randint(80, WORLD_H - 80)
+
+            # Register the species
+            template_genome = Genome()
+            template_genome._alleles['size'] = (size_dom, size_rec)
+            for gene, val in overrides.items():
+                template_genome._alleles[gene] = val
+            self.species_registry[species_id] = {
+                'genome_snapshot': template_genome,
                 'first_tick': 0,
                 'extinct_tick': None,
             }
+
+            spawned = 0
+            attempts = 0
+            while spawned < arch_count and attempts < arch_count * 10:
+                attempts += 1
+                x = max(0, min(WORLD_W - 1, cx + random.randint(-cluster_radius, cluster_radius)))
+                y = max(0, min(WORLD_H - 1, cy + random.randint(-cluster_radius, cluster_radius)))
+                z = self._find_surface_z(x, y)
+                if z is None:
+                    continue
+
+                # Skip water spawning for lung-breathers and vice versa
+                spawn_cell = self.world.get_cell(x, y, z - 1)
+                is_water_spawn = spawn_cell == int(CellType.WATER)
+                is_gill = overrides.get('lung_ratio', (200, 180))[0] < 128
+                if is_water_spawn and not is_gill:
+                    continue
+                if not is_water_spawn and is_gill:
+                    continue
+
+                # Build genome from archetype template with small variation
+                genome = Genome()
+                # Apply archetype overrides
+                genome._alleles['size'] = (size_dom, size_rec)
+                for gene, val in overrides.items():
+                    genome._alleles[gene] = val
+                # Add small per-organism variation within the species
+                for gene in ['size', 'metabolism_rate', 'vision_range', 'reproduction_cost']:
+                    a, b = genome._alleles[gene]
+                    genome._alleles[gene] = (
+                        max(0, min(255, a + random.randint(-20, 20))),
+                        max(0, min(255, b + random.randint(-20, 20))),
+                    )
+
+                # For sexual species, alternate gender so pairs form naturally
+                if overrides.get('reproduction_mode', (60,))[0] >= 128:
+                    if spawned % 2 == 0:
+                        genome._alleles['gender'] = (200, 180)   # Gender B
+                    else:
+                        genome._alleles['gender'] = (55, 40)     # Gender A
+
+                org = Organism(genome, x, y, z + 1, species_id=species_id)
+                org.state.calories = org.body.calorie_capacity * 0.9
+                self.pool.add(org)
+                spawned += 1
 
     def _find_surface_z(self, x, y) -> int | None:
         """Return z of the highest non-AIR cell at (x,y), or None if all air."""
@@ -410,10 +490,11 @@ class Simulation:
                         nearest_prey_dist = dist
                         nearest_prey_id = other.id
 
-            # Mate detection uses wider range
+            # Mate detection uses wider range — but must be same species
             if dist <= MATE_RANGE:
                 if (other.genome.get_dominant_allele('reproduction_mode') >= 128 and
-                        other.state.age >= 100):
+                        other.state.age >= 100 and
+                        other.species_id == org.species_id):  # same-species requirement
                     if dist < nearest_mate_dist:
                         nearest_mate_dist = dist
                         nearest_mate_id = other.id
@@ -759,7 +840,8 @@ class Simulation:
             if mate and mate.is_alive:
                 my_gender = org.genome.get_dominant_allele('gender') >= 128
                 mate_gender = mate.genome.get_dominant_allele('gender') >= 128
-                if my_gender != mate_gender:  # require opposite genders
+                same_species = org.species_id == mate.species_id
+                if my_gender != mate_gender and same_species:
                     child_genome = Genome.sexual_reproduction(org.genome, mate.genome)
                 else:
                     child_genome = Genome.asexual_reproduction(org.genome)
@@ -781,6 +863,8 @@ class Simulation:
                         baby.body.calorie_capacity,
                         invested_calories * 0.8
                     )
+                    # Check if baby has drifted far enough to form a new species
+                    self._maybe_speciate(baby, org.species_id)
                     # Register new species if not already known
                     if baby.species_id not in self.species_registry:
                         self.species_registry[baby.species_id] = {
@@ -790,6 +874,28 @@ class Simulation:
                         }
                     return baby
         return None
+
+    def _maybe_speciate(self, org: 'Organism', parent_species_id: int) -> None:
+        """If the organism has drifted far enough from its parent species, assign it a new species_id.
+
+        Speciation threshold: genetic distance > 0.30 from parent species snapshot genome.
+        This creates gradual divergence — heavy mutation can produce new species over time.
+        """
+        parent_info = self.species_registry.get(parent_species_id)
+        if parent_info is None:
+            return
+        parent_genome = parent_info['genome_snapshot']
+        dist = _genetic_distance(org.genome, parent_genome)
+        if dist > 0.30:
+            # New species branches off
+            new_sid = self.species_counter
+            self.species_counter += 1
+            org.species_id = new_sid
+            self.species_registry[new_sid] = {
+                'genome_snapshot': org.genome,
+                'first_tick': self.tick_count,
+                'extinct_tick': None,
+            }
 
     def _grow_vegetation(self):
         """Expand WOOD cells near existing WOOD — simulates tree and kelp regrowth.
