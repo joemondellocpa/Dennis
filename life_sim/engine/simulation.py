@@ -816,6 +816,19 @@ class Simulation:
             'paused': self.paused,
         }
 
+    def spawn_clone(self, genome, x: int, y: int, z: int) -> 'Organism':
+        """Spawn a clone of the given genome at world coordinates (x, y, z).
+
+        The clone has slightly mutated genome (asexual_reproduction with 0.02 rate).
+        """
+        from .genetics import Genome
+        from .organism import Organism
+        child_genome = Genome.asexual_reproduction(genome, mutation_rate=0.02)
+        child = Organism(child_genome, x, y, z, species_id=0)
+        child.state.calories = child.body.calorie_capacity * 0.8
+        self.pool.add(child)
+        return child
+
     def get_species_stats(self) -> list:
         """Return per-species stats sorted by population desc, then extinct ones after."""
         living = self.pool.living()

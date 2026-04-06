@@ -52,6 +52,12 @@ HELP_LINES = [
     " G               Gene prevalence",
     " q               Quit",
     "",
+    " GOD MODE (requires selection)",
+    " C               Copy selected organism genome",
+    " F               Feed selected organism to full",
+    " K               Kill selected organism",
+    " V               Paste genome clone at cursor",
+    "",
     " Press any key to close ",
 ]
 
@@ -86,9 +92,18 @@ class AsciiUI:
         self.gene_screen_visible = False
         self._gene_scroll = 0
 
+        # God-mode clipboard state
+        self._clipboard_genome = None   # genome copied for paste
+        self._status_msg = ''           # ephemeral status message shown in footer
+        self._status_msg_ticks = 0      # countdown to clear status message
+
         # FPS tracking — store timestamps of last N frame render completions
         self._frame_times: deque = deque(maxlen=20)
         self._last_render_time: float = 0.0
+
+    def _set_status(self, msg: str) -> None:
+        self._status_msg = msg
+        self._status_msg_ticks = 30   # show for ~30 render frames
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -299,6 +314,41 @@ class AsciiUI:
                 self.view_x = max(self.view_x - scroll, 0)
             elif key == curses.KEY_RIGHT:
                 self.view_x = min(self.view_x + scroll, WORLD_W - max(view_w, 1))
+
+        # --- God-mode: C = copy genome, F = feed, K = kill, V = paste clone ---
+        if key == ord('c') or key == ord('C'):
+            if self.selected_organism and self.selected_organism.is_alive:
+                self._clipboard_genome = self.selected_organism.genome
+                self._set_status(f'Copied genome of org {hex(self.selected_organism.id)}')
+            else:
+                self._set_status('No organism selected')
+
+        elif key == ord('f') or key == ord('F'):
+            if self.selected_organism and self.selected_organism.is_alive:
+                self.selected_organism.state.calories = self.selected_organism.body.calorie_capacity
+                self._set_status(f'Fed org {hex(self.selected_organism.id)} to full')
+            else:
+                self._set_status('No organism selected')
+
+        elif key == ord('k') or key == ord('K'):
+            if self.selected_organism and self.selected_organism.is_alive:
+                oid = self.selected_organism.id
+                self.selected_organism.state.alive = False
+                self.sim.pool.dead_ids.append(oid)
+                self._set_status(f'Killed org {hex(oid)}')
+                self.selected_organism = None
+            else:
+                self._set_status('No organism selected')
+
+        elif key == ord('v') or key == ord('V'):
+            if self._clipboard_genome is not None:
+                wx = self.cursor_x
+                wy = self.cursor_y
+                wz = self.view_z
+                clone = self.sim.spawn_clone(self._clipboard_genome, wx, wy, wz)
+                self._set_status(f'Spawned clone {hex(clone.id)} at ({wx},{wy},{wz})')
+            else:
+                self._set_status('No genome in clipboard — press C to copy first')
 
         return False
 
@@ -639,10 +689,28 @@ class AsciiUI:
                 pass
             row += 1
 
-        # "Esc: deselect" hint just before minimap area
+        # God-mode hints just before minimap area
         hint_row = usable_last + 1
         if hint_row < max_rows - reserved:
             hint_row = max_rows - reserved - 1
+        color_dim = curses.color_pair(7) | curses.A_DIM
+        if hint_row >= start_row and hint_row < max_rows:
+            try:
+                self.stdscr.addstr(hint_row, x_offset,
+                                   " C:copy F:feed K:kill"[:w],
+                                   color_dim)
+            except curses.error:
+                pass
+            hint_row += 1
+        if hint_row >= start_row and hint_row < max_rows:
+            if self._clipboard_genome:
+                try:
+                    self.stdscr.addstr(hint_row, x_offset,
+                                       " V:paste clone here"[:w],
+                                       color_dim)
+                except curses.error:
+                    pass
+                hint_row += 1
         if hint_row >= start_row and hint_row < max_rows:
             try:
                 self.stdscr.addstr(hint_row, x_offset,
@@ -685,6 +753,11 @@ class AsciiUI:
             f"Spd:{speed_str}  "
             f"q=quit +/-=z h=help"
         )
+
+        # Show ephemeral status message if active (overrides normal status)
+        if self._status_msg_ticks > 0:
+            self._status_msg_ticks -= 1
+            status = f'  *** {self._status_msg} ***  '
 
         # Truncate to terminal width (leave last col for safety)
         status = status[: width - 1]
