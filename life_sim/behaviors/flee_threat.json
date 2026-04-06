@@ -4,7 +4,7 @@
   "priority": 95,
   "condition": {
     "type": "threat_nearby",
-    "param": 200
+    "param": 35
   },
   "action": {
     "type": "flee",

@@ -217,19 +217,19 @@ class WorldGenerator:
                 # z=20: walking surface — biome-based variety
                 # 0=rocky  1=grassy  2=sand_dune  3=barren
                 r = np.random.random((CHUNK_SIZE, CHUNK_SIZE))
-                if biome == 0:   # rocky: mostly exposed stone, sparse soil pockets
+                if biome == 0:   # rocky: stone with substantial soil pockets
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
-                    layer[r < 0.12] = _SOIL
+                    layer[r < 0.40] = _SOIL
                 elif biome == 1: # grassy: soil-dominant with some stone breaks
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SOIL, dtype=np.uint8)
                     layer[r < 0.28] = _STONE
-                elif biome == 2: # sand_dune: 90% sand, 10% soil (digger food)
+                elif biome == 2: # sand_dune: sandy with soil pockets for diggers
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SAND, dtype=np.uint8)
-                    layer[r < 0.10] = _SOIL
+                    layer[r < 0.18] = _SOIL
                 else:            # barren: stone/sand/soil wasteland
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
-                    layer[r < 0.35] = _SOIL
-                    layer[(r >= 0.65) & (r < 0.80)] = _SAND
+                    layer[r < 0.45] = _SOIL
+                    layer[(r >= 0.70) & (r < 0.82)] = _SAND
                 cells[:, :, lz] = layer
         chunk.dirty = True
 

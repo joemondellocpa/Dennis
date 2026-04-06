@@ -1,5 +1,6 @@
 import random
 import math
+import heapq as _heapq
 from collections import deque
 from .world import World, WorldGenerator, WORLD_W, WORLD_H, WORLD_D, CHUNK_SIZE
 from .cells import CellType, CELL_PROPS
@@ -29,6 +30,8 @@ class Simulation:
 
         # Rolling gene history snapshots (200 ticks max)
         self._gene_history: deque = deque(maxlen=200)
+        self._regen_heap: list = []   # (respawn_tick, x, y, z, cell_type_int)
+        self._heapq = _heapq
 
         # Init
         load_all_behaviors()
@@ -116,6 +119,10 @@ class Simulation:
         if self.tick_count % 3 == 0:
             self.physics.tick(active_chunks)
 
+        # Vegetation growth (every 3 ticks to keep groves alive and expanding)
+        if self.tick_count % 3 == 0:
+            self._grow_vegetation()
+
         # 3. Process each organism
         dead_ids = []
         new_organisms = []
@@ -135,6 +142,13 @@ class Simulation:
 
         # 5. Cull if over limit
         self.pool.cull_to_limit()
+
+        # Regenerate consumed food cells — prevents permanent depletion
+        _now = self.tick_count
+        while self._regen_heap and self._regen_heap[0][0] <= _now:
+            _, rx, ry, rz, rct = self._heapq.heappop(self._regen_heap)
+            if self.world.get_cell(rx, ry, rz) == int(CellType.AIR):
+                self.world.set_cell(rx, ry, rz, rct)
 
         # Sample gene averages every 5 ticks for the gene screen
         if self.tick_count % 5 == 0:
@@ -176,6 +190,11 @@ class Simulation:
             state.alive = False
             return 'dead'
 
+        # Ensure organism rests on the correct surface every tick.
+        # Without this, an organism that eats the cell below it floats in mid-air
+        # until it happens to move, starving next to food it cannot reach.
+        self._apply_gravity(org)
+
         # Update medium (in water?)
         cell_here = self.world.get_cell(state.x, state.y, state.z)
         state.in_water = (cell_here == CellType.WATER)
@@ -192,7 +211,9 @@ class Simulation:
         if org.genome.get_dominant_allele('tree_affinity') > 127:
             for _, _, _, neighbor_ct in self.world.get_neighbors(state.x, state.y, state.z):
                 if neighbor_ct == CellType.WOOD:
-                    state.calories = min(body.calorie_capacity, state.calories + 2.0)
+                    # Bonus = 30% of tick cost, min 1.5 cal — makes staying near trees worthwhile
+                    bonus = max(1.5, body.calorie_cost_per_tick * 0.30)
+                    state.calories = min(body.calorie_capacity, state.calories + bonus)
                     break
 
         # cold_blood: 50% metabolism reduction (applied by reducing cost here)
@@ -371,7 +392,9 @@ class Simulation:
                 state._cached_food_pos is None):
             scan_r = min(vision, 15)
             stride = max(1, scan_r // 8)
-            for dz in range(-1, 2):   # only ±1 z (soil is one level below)
+            # Small organisms scan deeper — can find soil 2 layers below stone
+            _dz_min = -2 if body.total_cells < 10 else -1
+            for dz in range(_dz_min, 2):
                 for dy in range(-scan_r, scan_r + 1, stride):
                     for dx in range(-scan_r, scan_r + 1, stride):
                         nx = state.x + dx
@@ -623,6 +646,10 @@ class Simulation:
                 state.calories = min(body.calorie_capacity,
                                      state.calories + cal * efficiency * bite_size)
                 self.world.set_cell(nx, ny, nz, CellType.AIR)  # consumed
+                # Schedule regeneration: SOIL=60 ticks, WOOD=250 ticks
+                delay = 250 if ct == int(CellType.WOOD) else 60
+                self._heapq.heappush(self._regen_heap,
+                    (self.tick_count + delay, nx, ny, nz, ct))
                 return True
         return False
 
@@ -704,6 +731,43 @@ class Simulation:
                         }
                     return baby
         return None
+
+    def _grow_vegetation(self):
+        """Expand WOOD cells near existing WOOD — simulates tree and kelp regrowth.
+
+        Each active chunk has a small chance per tick to grow one new WOOD cell
+        adjacent to an existing one, allowing groves to slowly expand and fill gaps.
+        """
+        _WOOD = int(CellType.WOOD)
+        _AIR  = int(CellType.AIR)
+        _WATER = int(CellType.WATER)
+        import numpy as _np
+
+        for chunk_key in list(self.world.active_chunks):
+            if random.random() > 0.08:   # only 8% of active chunks grow per tick
+                continue
+            if chunk_key not in self.world.chunks:
+                continue
+            chunk = self.world.chunks[chunk_key]
+            wood_positions = _np.argwhere(chunk.cells == _WOOD)
+            if len(wood_positions) == 0:
+                continue
+            cx, cy, cz = chunk_key
+            ox, oy, oz = cx * 16, cy * 16, cz * 16
+            # Pick one random wood cell to try to grow from
+            lx, ly, lz = wood_positions[random.randrange(len(wood_positions))]
+            wx, wy, wz = int(ox + lx), int(oy + ly), int(oz + lz)
+            # Growth directions: prefer upward for trees, sideways for kelp
+            candidates = [(wx, wy, wz + 1), (wx + 1, wy, wz), (wx - 1, wy, wz),
+                          (wx, wy + 1, wz), (wx, wy - 1, wz)]
+            random.shuffle(candidates)
+            for nx, ny, nz in candidates:
+                if not self.world.in_bounds(nx, ny, nz):
+                    continue
+                ct = self.world.get_cell(nx, ny, nz)
+                if ct == _AIR or ct == _WATER:
+                    self.world.set_cell(nx, ny, nz, _WOOD)
+                    break
 
     def get_stats(self) -> dict:
         """Return simulation statistics for UI."""
