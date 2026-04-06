@@ -359,7 +359,19 @@ class AsciiUI:
         org_at: dict = {}
         for org in self.pool.living():
             if org.state.z == self.view_z:
-                org_at[(org.state.x, org.state.y)] = org
+                r = org.display_radius
+                # Register center cell
+                org_at[(org.state.x, org.state.y)] = (org, True)
+                # Register edge cells for large organisms
+                if r > 0:
+                    for _dx in range(-r, r + 1):
+                        for _dy in range(-r, r + 1):
+                            if _dx == 0 and _dy == 0:
+                                continue
+                            px = org.state.x + _dx
+                            py = org.state.y + _dy
+                            if (px, py) not in org_at:  # don't overwrite another organism's cell
+                                org_at[(px, py)] = (org, False)
 
         for screen_y in range(view_h):
             world_y = self.view_y + screen_y
@@ -376,12 +388,14 @@ class AsciiUI:
 
                 # Check for organism first
                 if (world_x, world_y) in org_at:
-                    org = org_at[(world_x, world_y)]
+                    org, is_center = org_at[(world_x, world_y)]
                     ch = org.display_char
                     cp = org.display_color_pair
                     color = curses.color_pair(cp)
-                    if cp == 8:           # orange = toxic — render bold for brightness
+                    if cp == 8:
                         color |= curses.A_BOLD
+                    if not is_center:
+                        color |= curses.A_DIM  # edge cells slightly dimmer
                     if self.selected_organism and org.id == self.selected_organism.id:
                         color |= curses.A_REVERSE
                 else:

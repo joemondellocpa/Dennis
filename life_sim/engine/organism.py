@@ -107,13 +107,20 @@ class Organism:
     def display_char(self) -> str:
         """ASCII character for rendering, scaled by organism size."""
         size = self.body.total_cells
-        if size <= 2:
+        if size <= 4:
             return ','
-        if size <= 5:
+        if size <= 12:
             return 'o'
-        if size <= 8:
+        if size <= 25:
             return 'O'
         return '@'
+
+    @property
+    def display_radius(self) -> int:
+        """Rendering radius in screen cells. 0=1×1, 1=3×3.
+        Organisms with ≥15 cells are large enough to display as a 3×3 block.
+        """
+        return 1 if self.body.total_cells >= 15 else 0
 
     @property
     def display_color_pair(self) -> int:

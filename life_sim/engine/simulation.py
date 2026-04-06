@@ -36,32 +36,51 @@ class Simulation:
         self._seed_initial_organisms(count=initial_count)
 
     def _seed_initial_organisms(self, count: int):
-        """Place starter organisms on the soil surface."""
-        # Find the surface z for random x,y positions and place organisms there
+        """Place starter organisms on the soil surface.
+
+        Size distribution is intentionally skewed toward small organisms so the
+        ecosystem starts with abundant prey and a few large predators:
+          50% tiny  (size 1–5):  cheap, fast, eat soil — the base of the food chain
+          30% small (size 5–15): generalist survivors
+          15% medium(size 15–30): emerging predators / large herbivores
+           5% large (size 30–50): apex predators, seed the predation niche early
+        """
         for i in range(count):
             x = random.randint(0, WORLD_W - 1)
             y = random.randint(0, WORLD_H - 1)
-            # Find surface: highest z that is not AIR
             z = self._find_surface_z(x, y)
             if z is None:
                 continue
             genome = Genome.random_genome()
+
+            # Biased size distribution — size gene dominant allele controls size tier
+            size_roll = random.random()
+            if size_roll < 0.50:               # tiny  (1-5 cells)
+                sv = random.randint(1, 26)
+            elif size_roll < 0.80:             # small (5-15 cells)
+                sv = random.randint(27, 77)
+            elif size_roll < 0.95:             # medium (15-30 cells)
+                sv = random.randint(78, 153)
+            else:                              # large (30-50 cells)
+                sv = random.randint(154, 255)
+            genome._alleles['size'] = (sv, random.randint(0, sv))
+
+            # Large organisms seed predation; small organisms seed flocking / prey traits
+            if size_roll >= 0.80:
+                genome._alleles['can_attack'] = (random.randint(160, 255), random.randint(128, 200))
+            else:
+                genome._alleles['flock_behavior'] = (random.randint(128, 220), random.randint(100, 200))
+
+            # Bias lung/gill to match spawn terrain
+            spawn_cell = self.world.get_cell(x, y, z - 1)
+            if spawn_cell == CellType.WATER:
+                genome._alleles['lung_ratio'] = (random.randint(0, 80), random.randint(0, 80))
+            else:
+                genome._alleles['lung_ratio'] = (random.randint(150, 255), random.randint(150, 255))
+
             org = Organism(genome, x, y, z + 1, species_id=self.species_counter)
             self.species_counter += 1
             org.state.calories = org.body.calorie_capacity * 0.9
-            if i % 10 == 0:
-                # Bias toward predator — give can_attack dominant allele
-                org.genome._alleles['can_attack'] = (200, 210)
-                org.body = BodyPlan(org.genome)  # recompute body with updated genome
-            # Bias lung_ratio to match spawn terrain
-            spawn_cell = self.world.get_cell(x, y, z - 1)  # cell below = the surface
-            if spawn_cell == CellType.WATER:
-                # Bias toward gill (lung_ratio < 128)
-                org.genome._alleles['lung_ratio'] = (random.randint(0, 80), random.randint(0, 80))
-            else:
-                # Bias toward lung (lung_ratio > 128)
-                org.genome._alleles['lung_ratio'] = (random.randint(150, 255), random.randint(150, 255))
-            org.body = BodyPlan(org.genome)  # recompute body with biased genome
             self.pool.add(org)
             self.species_registry[org.species_id] = {
                 'genome_snapshot': org.genome,
@@ -185,13 +204,18 @@ class Simulation:
         if self.tick_count % 3 == 0:
             self._try_eat(org)
 
+        # Large organisms are slower — skip movement on some ticks
+        # size 1=99%, size 25=75%, size 50=50% movement probability
+        _size_move_prob = max(0.5, 1.0 - body.total_cells * 0.01)
+        _size_move_skip = random.random() > _size_move_prob
+
         # Unconditional reproduce attempt — every 5 ticks for mature, well-fed orgs.
         # This ensures reproduction happens regardless of behavior slot lottery.
         if self.tick_count % 5 == org.id % 5:  # stagger across organisms
             maturity_ticks = int(org.genome.phenotype('maturity_ticks') * 500) + 100
             if state.age >= maturity_ticks:
                 cal_ratio = state.calories / max(1, body.calorie_capacity)
-                repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + 10
+                repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + max(1, int(body.calorie_capacity * 0.05))
                 if cal_ratio >= 0.75 and state.calories > repro_cost:
                     mode = org.genome.get_dominant_allele('reproduction_mode')
                     # Build minimal context for _reproduce (needs nearest_mate_id)
@@ -219,6 +243,39 @@ class Simulation:
                         if baby:
                             return baby
 
+        # Large hungry predators hunt unconditionally — they can't survive on plants alone.
+        # hunt_range is size-scaled vision so predators actively track distant prey.
+        if (org.genome.get_dominant_allele('can_attack') > 127 and
+                body.total_cells >= 15 and
+                state.calories / body.calorie_capacity < 0.7):
+            attack_range_u = 1.5 + body.total_cells * 0.1
+            hunt_range = min(150, 20 + body.total_cells * 2)  # size15=50, size50=120 cells
+            nearest_prey_u, nearest_dist_u = None, float('inf')
+            for other in living_now:
+                if other.id == org.id or not other.is_alive:
+                    continue
+                if other.body.total_cells >= body.total_cells * 0.7:
+                    continue  # too big to eat
+                # toxin_detection: skip visibly toxic (orange) prey
+                if (other.genome.get_dominant_allele('toxicity') > 127 and
+                        org.genome.get_dominant_allele('toxin_detection') > 127):
+                    continue
+                odx = other.state.x - state.x
+                ody = other.state.y - state.y
+                odist = math.sqrt(odx*odx + ody*ody)
+                if odist <= hunt_range and odist < nearest_dist_u:
+                    nearest_prey_u, nearest_dist_u = other, odist
+            if nearest_prey_u is not None:
+                if nearest_dist_u <= attack_range_u:
+                    armor_factor = 1.0 - nearest_prey_u.genome.phenotype('armor') * 0.6
+                    cal_gain = nearest_prey_u.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor
+                    state.calories = min(body.calorie_capacity, state.calories + cal_gain)
+                    if nearest_prey_u.genome.get_dominant_allele('toxicity') > 127:
+                        state.calories = max(0, state.calories - 20)
+                    nearest_prey_u.state.alive = False
+                else:
+                    self._move_toward(org, nearest_prey_u.state.x, nearest_prey_u.state.y, nearest_prey_u.state.z, 1.0)
+
         # Build world context for behavior evaluator
         ctx = self._build_world_context(org, living_now)
 
@@ -226,7 +283,7 @@ class Simulation:
         action = self.evaluator.evaluate(state, body, org.genome, ctx)
         if action:
             state.current_behavior = action['behavior_name']
-            result = self._execute_action(org, action, ctx, living_now)
+            result = self._execute_action(org, action, ctx, living_now, skip_move=_size_move_skip)
             if result == 'dead':
                 return 'dead'
             if isinstance(result, Organism):
@@ -354,7 +411,7 @@ class Simulation:
             'maturity_ticks': maturity,
         }
 
-    def _execute_action(self, org: Organism, action: dict, ctx: dict, living_now: list = None):
+    def _execute_action(self, org: Organism, action: dict, ctx: dict, living_now: list = None, skip_move: bool = False):
         """
         Execute the chosen action. Returns 'dead', Organism (newborn), or None.
         """
@@ -363,6 +420,11 @@ class Simulation:
         atype = action['action_type']
         speed_mul = action.get('speed_multiplier', 1.0)
         cal_mul = action.get('calorie_multiplier', 1.0)
+
+        # Honour size-based speed gating set in _process_organism
+        if skip_move:
+            if action.get('action_type') in ('wander', 'flee', 'approach', 'hunt', 'dive', 'surface'):
+                return None
 
         # Extra calorie burn for active behaviors
         state.calories -= body.calorie_cost_per_tick * (cal_mul - 1.0) * 0.5
@@ -394,7 +456,7 @@ class Simulation:
         elif atype == 'reproduce':
             maturity = ctx['maturity_ticks']
             cal_threshold = action.get('action_param', action.get('param', 75)) / 100.0
-            repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + 10
+            repro_cost = int(org.genome.phenotype('reproduction_cost') * body.calorie_capacity * 0.25) + max(1, int(body.calorie_capacity * 0.05))
             mode = org.genome.get_dominant_allele('reproduction_mode')
             cal_ratio = state.calories / max(1, body.calorie_capacity)
             is_sexual = mode >= 128 and ctx.get('nearest_mate_id') is not None
@@ -431,7 +493,8 @@ class Simulation:
                     dy = org.state.y - prey.state.y
                     dz = org.state.z - prey.state.z
                     dist = (dx*dx + dy*dy + dz*dz) ** 0.5
-                    if dist <= 1.5:
+                    attack_range = 1.5 + body.total_cells * 0.1
+                    if dist <= attack_range:
                         # armor gene reduces calorie gain (prey absorbs up to 60% damage)
                         armor_factor = 1.0 - prey.genome.phenotype('armor') * 0.6
                         cal_gain = prey.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor
@@ -554,8 +617,11 @@ class Simulation:
             cal = CELL_PROPS.get(ct, {}).get('calorie_value', 0)
             if cal > 0:
                 efficiency = org.genome.phenotype('calorie_efficiency')
-                state.calories = min(org.body.calorie_capacity,
-                                     state.calories + cal * efficiency * 10)
+                # Larger organisms take bigger bites; still can't sustain on SOIL alone at size 15+
+                body = org.body
+                bite_size = max(10, body.total_cells * 0.5 + 5)
+                state.calories = min(body.calorie_capacity,
+                                     state.calories + cal * efficiency * bite_size)
                 self.world.set_cell(nx, ny, nz, CellType.AIR)  # consumed
                 return True
         return False
