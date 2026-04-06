@@ -81,10 +81,14 @@ class Simulation:
                 sv = random.randint(154, 255)
             genome._alleles['size'] = (sv, random.randint(0, sv))
 
-            # Large organisms seed predation; small organisms seed flocking / prey traits
-            if size_roll >= 0.80:
-                genome._alleles['can_attack'] = (random.randint(160, 255), random.randint(128, 200))
+            # Seed predator/prey roles explicitly:
+            # top 5% = apex predators, next 15% = medium predators, rest = prey/herbivores
+            if size_roll >= 0.95:
+                genome._alleles['can_attack'] = (random.randint(200, 255), random.randint(160, 220))
+            elif size_roll >= 0.80:
+                genome._alleles['can_attack'] = (random.randint(140, 200), random.randint(100, 170))
             else:
+                genome._alleles['can_attack'] = (random.randint(0, 90), random.randint(0, 70))
                 genome._alleles['flock_behavior'] = (random.randint(128, 220), random.randint(100, 200))
 
             # Bias lung/gill to match spawn terrain
@@ -277,11 +281,10 @@ class Simulation:
                         if baby:
                             return baby
 
-        # Large hungry predators hunt unconditionally — they can't survive on plants alone.
-        # hunt_range is size-scaled vision so predators actively track distant prey.
+        # Any predator hunts unconditionally when hungry — no size gate.
+        # Small predators have shorter hunt range; large predators roam far.
         if (org.genome.get_dominant_allele('can_attack') > 127 and
-                body.total_cells >= 15 and
-                state.calories / body.calorie_capacity < 0.7):
+                state.calories / body.calorie_capacity < 0.85):
             attack_range_u = 1.5 + body.total_cells * 0.1
             hunt_range = min(150, 20 + body.total_cells * 2)  # size15=50, size50=120 cells
             nearest_prey_u, nearest_dist_u = None, float('inf')
