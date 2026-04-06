@@ -29,6 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description='Dennis Life Simulator')
     parser.add_argument('--seed', type=int, default=None, help='Random seed (random if omitted)')
     parser.add_argument('--count', type=int, default=None, help='Initial organism count')
+    parser.add_argument('--density', type=int, default=None, help='Spawning density 1-5 (1=spread, 5=clusters)')
     parser.add_argument('--no-build-ext', action='store_true', help='Skip C extension build')
     parser.add_argument('--headless', action='store_true',
                         help='Run headless (no UI) for N ticks then exit')
@@ -52,10 +53,18 @@ def main():
         raw = input("Initial organism count [100]: ").strip()
         count = int(raw) if raw else 100
 
+    spawning_density = args.density
+    if spawning_density is None:
+        density_input = input("Spawning density 1-5 (1=spread, 5=clusters): ").strip()
+        try:
+            spawning_density = max(1, min(5, int(density_input)))
+        except ValueError:
+            spawning_density = 3
+
     from life_sim.engine.simulation import Simulation
 
     print(f"Initializing simulation (seed={seed}, organisms={count})...")
-    sim = Simulation(seed=seed, initial_count=count)
+    sim = Simulation(seed=seed, initial_count=count, spawning_density=spawning_density)
     print(f"World generated. {sim.pool.count()} starter organisms placed.")
 
     if args.headless:

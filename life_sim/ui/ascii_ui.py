@@ -79,7 +79,7 @@ class AsciiUI:
         self.ticks_per_frame = 1  # how many ticks to run before re-rendering
 
         self.stdscr = None
-        self.info_panel_width = 30
+        self.info_panel_width = 32
         self.help_visible = False
         self.species_screen_visible = False
         self._species_scroll = 0
@@ -461,24 +461,49 @@ class AsciiUI:
 
         if self.selected_organism is not None:
             org = self.selected_organism
-            put("[ Selected Organism ]", title_attr)
-            put("")
+            # Header: organism ID in hex (last 4 nibbles)
+            org_hex = f"#{org.id & 0xFFFF:04x}"
+            header_text = f" ORGANISM {org_hex} "
+            put(header_text.center(panel_w, '='), title_attr)
 
-            summary = {}
+            # Basic stats block
             try:
-                summary = org.stats_summary()
+                size_val  = org.body.total_cells
+                age_val   = org.state.age
+                cal_cur   = org.state.calories
+                cal_cap   = org.body.calorie_capacity
+                cal_pct   = int(cal_cur * 100 / cal_cap) if cal_cap else 0
+                maturity  = org.genome.get_dominant_allele('maturity_ticks')
+                met_rate  = org.genome.get_dominant_allele('metabolism_rate')
+                cost_per_tick = met_rate / 255.0 * 5.0  # rough phenotype estimate
+                rm_val    = org.genome.get_dominant_allele('reproduction_mode')
+                gender_val = org.genome.get_dominant_allele('gender')
+                behavior  = getattr(org.state, 'current_behavior', '?')
+
+                put(f" Size:{size_val:<5}  Color:{org.display_color_pair}")
+                put(f" Age:{age_val:<6}  Maturity:{maturity}")
+                put(f" Cal: {cal_cur:.0f}/{cal_cap} ({cal_pct}%)")
+                put(f" Cost: {cost_per_tick:.1f}/tick")
+
+                if rm_val >= 128:
+                    gender_str = "\u2640 Gender A" if gender_val < 128 else "\u2642 Gender B"
+                    put(f" Repr: Sexual {gender_str}")
+                else:
+                    put(" Repr: Asexual")
+
+                put(f" Behavior: {str(behavior)[:panel_w - 11]}")
             except Exception:
-                pass
+                put(" (stats unavailable)")
 
-            for key, val in summary.items():
-                line = f" {key}: {val}"
-                put(line)
+            # Genes separator
+            sep = "\u2500" * (panel_w - 4)
+            put(f"\u2500\u2500\u2500 GENES {sep}"[:panel_w], curses.color_pair(7) | curses.A_BOLD)
 
-            put("")
-            put(f" Pos: ({org.state.x}, {org.state.y}, {org.state.z})")
-            put(f" Char: {org.display_char}  Color: {org.display_color_pair}")
-            put("")
-            put(" Esc: deselect", curses.color_pair(7))
+            # Render gene bars; pass remaining rows and starting row to helper
+            self._render_org_detail(org, panel_x, row, panel_h, panel_w)
+
+            # Footer at last row in remaining space — handled inside helper
+            # Fall through; minimap renders below
 
         elif self.selected_cell is not None:
             cx, cy, cz, cell_type = self.selected_cell
@@ -532,6 +557,99 @@ class AsciiUI:
                 put(" q:          quit")
 
         self._render_minimap(panel_x, panel_h)
+
+    # Special gene text interpretations shown after the bar
+    _GENE_INTERP = {
+        'reproduction_mode': lambda v: ('Sexual \u2642' if v >= 128 else 'Asexual'),
+        'gender':            lambda v: ('\u2640 Gender A' if v < 128 else '\u2642 Gender B'),
+        'lung_ratio':        lambda v: ('Lung' if v > 128 else 'Gill'),
+        'can_attack':        lambda v: ('Predator' if v > 127 else ''),
+        'toxicity':          lambda v: ('Toxic \u26a0' if v > 127 else ''),
+        'cold_blood':        lambda v: ('Cold-blood' if v > 127 else ''),
+    }
+
+    def _render_org_detail(self, org, x_offset: int, start_row: int,
+                           max_rows: int, w: int):
+        """Render per-gene bars into the info panel column.
+
+        Parameters
+        ----------
+        org        : Organism whose genome to display
+        x_offset   : screen column where the info panel starts
+        start_row  : first screen row available for gene output
+        max_rows   : total panel height (screen rows)
+        w          : info panel character width
+        """
+        from life_sim.engine.genetics import Genome
+
+        # Reserve bottom rows for the minimap + map title + "Esc" hint
+        reserved = MINIMAP_H + 2 + 1   # minimap + title row + esc hint
+        usable_last = max_rows - reserved - 1
+
+        is_sexual = False
+        try:
+            is_sexual = org.genome.get_dominant_allele('reproduction_mode') >= 128
+        except Exception:
+            pass
+
+        row = start_row
+        for gene in Genome.GENES:
+            if row > usable_last:
+                break
+
+            # Skip 'gender' gene for asexual organisms
+            if gene == 'gender' and not is_sexual:
+                continue
+
+            try:
+                val = org.genome.get_dominant_allele(gene)
+            except Exception:
+                val = 0
+
+            filled = val * 6 // 255          # 0-6 filled blocks
+            bar    = '\u2588' * filled + '\u2591' * (6 - filled)
+
+            # Optional text interpretation for special genes
+            interp = ''
+            interp_fn = self._GENE_INTERP.get(gene)
+            if interp_fn:
+                interp = interp_fn(val)
+
+            # Build the line (gene name truncated to 14 chars + bar + value)
+            gene_label  = gene[:14]
+            line_name   = f" {gene_label:<14} "   # 17 chars
+            line_bar    = f"{bar} {val:3d}"        # 10 chars
+            interp_part = f" {interp}" if interp else ""
+
+            # Color: yellow for gene name, green if val>127 else red for bar
+            name_attr = curses.color_pair(3)
+            bar_attr  = curses.color_pair(2) if val > 127 else curses.color_pair(1)
+
+            try:
+                self.stdscr.addstr(row, x_offset,
+                                   line_name[:w], name_attr)
+            except curses.error:
+                pass
+            bar_col = x_offset + len(line_name)
+            try:
+                self.stdscr.addstr(row, bar_col,
+                                   (line_bar + interp_part)[: w - len(line_name)],
+                                   bar_attr)
+            except curses.error:
+                pass
+            row += 1
+
+        # "Esc: deselect" hint just before minimap area
+        hint_row = usable_last + 1
+        if hint_row < max_rows - reserved:
+            hint_row = max_rows - reserved - 1
+        if hint_row >= start_row and hint_row < max_rows:
+            try:
+                self.stdscr.addstr(hint_row, x_offset,
+                                   " Esc: deselect"[:w],
+                                   curses.color_pair(7))
+            except curses.error:
+                pass
 
     def _render_status_bar(self, row: int, width: int):
         """Render bottom status bar."""

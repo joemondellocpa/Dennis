@@ -10,8 +10,9 @@ from .genetics import Genome, BodyPlan
 from .behavior import BehaviorEvaluator, load_all_behaviors, mutate_behavior_file
 
 class Simulation:
-    def __init__(self, seed: int = 42, initial_count: int = 100):
+    def __init__(self, seed: int = 42, initial_count: int = 100, spawning_density: int = 3):
         random.seed(seed)
+        self.spawning_density = max(1, min(5, spawning_density))
 
         # Core systems
         self.world = World()
@@ -48,9 +49,21 @@ class Simulation:
           15% medium(size 15–30): emerging predators / large herbivores
            5% large (size 30–50): apex predators, seed the predation niche early
         """
+        # Cluster-based spawning: density 1 = spread, density 5 = tight clusters
+        # Choose a set of cluster centers, then spawn each organism near one
+        import math as _math
+        n_clusters = max(2, count // 8)
+        cluster_centers = [
+            (random.randint(50, WORLD_W - 50), random.randint(50, WORLD_H - 50))
+            for _ in range(n_clusters)
+        ]
+        # Cluster radius: density 1 → whole map, density 5 → 60 cells
+        cluster_radius = int(500 / (self.spawning_density ** 0.8))
+
         for i in range(count):
-            x = random.randint(0, WORLD_W - 1)
-            y = random.randint(0, WORLD_H - 1)
+            cx, cy = random.choice(cluster_centers)
+            x = max(0, min(WORLD_W - 1, cx + random.randint(-cluster_radius, cluster_radius)))
+            y = max(0, min(WORLD_H - 1, cy + random.randint(-cluster_radius, cluster_radius)))
             z = self._find_surface_z(x, y)
             if z is None:
                 continue
@@ -453,7 +466,28 @@ class Simulation:
         state.calories -= body.calorie_cost_per_tick * (cal_mul - 1.0) * 0.5
 
         if atype == 'wander':
-            self._move_random(org, speed_mul)
+            # Sexual organisms without a nearby mate wander purposefully toward
+            # other organisms rather than randomly — speeds up mate-finding.
+            is_sexual = org.genome.get_dominant_allele('reproduction_mode') >= 128
+            if is_sexual and ctx.get('nearest_mate_id') is None and len(living_now) > 1:
+                # Find the nearest organism of opposite gender
+                my_gender = org.genome.get_dominant_allele('gender') >= 128
+                best, best_d = None, float('inf')
+                for other in living_now:
+                    if other.id == org.id or not other.is_alive:
+                        continue
+                    other_gender = other.genome.get_dominant_allele('gender') >= 128
+                    if other_gender == my_gender:
+                        continue  # same gender, skip
+                    d = abs(other.state.x - state.x) + abs(other.state.y - state.y)
+                    if d < best_d:
+                        best, best_d = other, d
+                if best and best_d > 5:  # don't chase when very close
+                    self._move_toward(org, best.state.x, best.state.y, best.state.z, speed_mul)
+                else:
+                    self._move_random(org, speed_mul)
+            else:
+                self._move_random(org, speed_mul)
 
         elif atype == 'flee':
             # Move away from nearest threat direction (roughly)
@@ -700,10 +734,15 @@ class Simulation:
             return None
         mode = org.genome.get_dominant_allele('reproduction_mode')
 
-        if mode >= 128 and ctx['nearest_mate_id']:
+        if mode >= 128 and ctx.get('nearest_mate_id'):
             mate = self.pool.organisms.get(ctx['nearest_mate_id'])
             if mate and mate.is_alive:
-                child_genome = Genome.sexual_reproduction(org.genome, mate.genome)
+                my_gender = org.genome.get_dominant_allele('gender') >= 128
+                mate_gender = mate.genome.get_dominant_allele('gender') >= 128
+                if my_gender != mate_gender:  # require opposite genders
+                    child_genome = Genome.sexual_reproduction(org.genome, mate.genome)
+                else:
+                    child_genome = Genome.asexual_reproduction(org.genome)
             else:
                 child_genome = Genome.asexual_reproduction(org.genome)
         else:
