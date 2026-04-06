@@ -95,6 +95,7 @@ class AsciiUI:
         # God-mode clipboard state
         self._clipboard_genome = None   # genome copied for paste
         self._clone_flip = False        # alternates gender on successive pastes
+        self._gene_view_species = False # True = show species avg instead of individual
         self._status_msg = ''           # ephemeral status message shown in footer
         self._status_msg_ticks = 0      # countdown to clear status message
 
@@ -280,6 +281,7 @@ class AsciiUI:
             self.selection_mode = False
             self.selected_organism = None
             self.selected_cell = None
+            self._gene_view_species = False
             return False
 
         # --- Enter: confirm selection ---
@@ -341,8 +343,15 @@ class AsciiUI:
                 self.selected_organism = visible[idx]
                 self._set_status(f'Selected org {idx+1}/{len(visible)}')
 
+        # --- A: toggle gene view between individual and species average ---
+        if key == ord('a') or key == ord('A'):
+            if self.selected_organism:
+                self._gene_view_species = not self._gene_view_species
+                mode = 'species avg' if self._gene_view_species else 'individual'
+                self._set_status(f'Gene view: {mode}')
+
         # --- God-mode: C = copy genome, F = feed, K = kill, V = paste clone ---
-        if key == ord('c') or key == ord('C'):
+        elif key == ord('c') or key == ord('C'):
             if self.selected_organism and self.selected_organism.is_alive:
                 self._clipboard_genome = self.selected_organism.genome
                 self._clone_flip = False  # reset: first paste = same gender as original
@@ -598,12 +607,29 @@ class AsciiUI:
             except Exception:
                 put(" (stats unavailable)")
 
-            # Genes separator
-            sep = "\u2500" * (panel_w - 4)
-            put(f"\u2500\u2500\u2500 GENES {sep}"[:panel_w], curses.color_pair(7) | curses.A_BOLD)
+            # Genes separator — label shows current view mode; A toggles
+            if self._gene_view_species:
+                gene_header = f"\u2500\u2500 GENES [species avg] A\u2500"
+            else:
+                gene_header = f"\u2500\u2500 GENES [individual] A\u2500"
+            sep_fill = "\u2500" * max(0, panel_w - len(gene_header))
+            put((gene_header + sep_fill)[:panel_w], curses.color_pair(7) | curses.A_BOLD)
 
-            # Render gene bars; pass remaining rows and starting row to helper
-            self._render_org_detail(org, panel_x, row, panel_h, panel_w)
+            # Compute species-average gene values if toggle is on
+            gene_values = None  # None = use org's own genome
+            if self._gene_view_species:
+                from life_sim.engine.genetics import Genome
+                sid = org.species_id
+                members = [o for o in self.sim.pool.living() if o.species_id == sid]
+                if members:
+                    gene_values = {}
+                    for gene in Genome.GENES:
+                        total = sum(m.genome.get_dominant_allele(gene) for m in members)
+                        gene_values[gene] = round(total / len(members))
+
+            # Render gene bars
+            self._render_org_detail(org, panel_x, row, panel_h, panel_w,
+                                    gene_values=gene_values)
 
             # Footer at last row in remaining space — handled inside helper
             # Fall through; minimap renders below
@@ -672,7 +698,7 @@ class AsciiUI:
     }
 
     def _render_org_detail(self, org, x_offset: int, start_row: int,
-                           max_rows: int, w: int):
+                           max_rows: int, w: int, gene_values: dict = None):
         """Render per-gene bars into the info panel column.
 
         Parameters
@@ -682,6 +708,7 @@ class AsciiUI:
         start_row  : first screen row available for gene output
         max_rows   : total panel height (screen rows)
         w          : info panel character width
+        gene_values: optional dict of gene->int overrides (species avg mode)
         """
         from life_sim.engine.genetics import Genome
 
@@ -691,7 +718,8 @@ class AsciiUI:
 
         is_sexual = False
         try:
-            is_sexual = org.genome.get_dominant_allele('reproduction_mode') >= 128
+            rm_src = gene_values['reproduction_mode'] if gene_values else org.genome.get_dominant_allele('reproduction_mode')
+            is_sexual = rm_src >= 128
         except Exception:
             pass
 
@@ -705,7 +733,7 @@ class AsciiUI:
                 continue
 
             try:
-                val = org.genome.get_dominant_allele(gene)
+                val = gene_values[gene] if gene_values else org.genome.get_dominant_allele(gene)
             except Exception:
                 val = 0
 
