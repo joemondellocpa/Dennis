@@ -128,7 +128,7 @@ class WorldGenerator:
     WATER_POOL_COUNT = 40
     WATER_POOL_RADIUS = 3
     OUTCROP_COUNT = 20
-    GROVE_COUNT = 4        # dense tree groves on the surface
+    GROVE_COUNT = 6        # dense tree groves on the surface
     GROVE_RADIUS = 12      # cells radius per grove
 
     # Biome block size in chunks (4 chunks = 64 world cells per biome zone)
@@ -217,19 +217,19 @@ class WorldGenerator:
                 # z=20: walking surface — biome-based variety
                 # 0=rocky  1=grassy  2=sand_dune  3=barren
                 r = np.random.random((CHUNK_SIZE, CHUNK_SIZE))
-                if biome == 0:   # rocky: stone with substantial soil pockets
+                if biome == 0:   # rocky: stone with sparse soil pockets
+                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
+                    layer[r < 0.18] = _SOIL
+                elif biome == 1: # grassy: soil in patches, not dominant
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
                     layer[r < 0.40] = _SOIL
-                elif biome == 1: # grassy: soil-dominant with some stone breaks
-                    layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SOIL, dtype=np.uint8)
-                    layer[r < 0.28] = _STONE
-                elif biome == 2: # sand_dune: sandy with soil pockets for diggers
+                elif biome == 2: # sand_dune: harsh — very sparse soil, digger biome
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _SAND, dtype=np.uint8)
-                    layer[r < 0.18] = _SOIL
-                else:            # barren: stone/sand/soil wasteland
+                    layer[r < 0.08] = _SOIL
+                else:            # barren: stone/sand wasteland, minimal soil
                     layer = np.full((CHUNK_SIZE, CHUNK_SIZE), _STONE, dtype=np.uint8)
-                    layer[r < 0.45] = _SOIL
-                    layer[(r >= 0.70) & (r < 0.82)] = _SAND
+                    layer[r < 0.20] = _SOIL
+                    layer[(r >= 0.55) & (r < 0.70)] = _SAND
                 cells[:, :, lz] = layer
         chunk.dirty = True
 
@@ -294,7 +294,7 @@ class WorldGenerator:
             # are adjacent (dz=-1) and can eat it — primary food source for gill organisms.
             # ~15% density, clustered in patches for realism.
             for x, y in lake_cells:
-                if random.random() < 0.15:
+                if random.random() < 0.08:
                     world.set_cell(x, y, surface_z - 1, int(CellType.WOOD))
 
     # ------------------------------------------------------------------

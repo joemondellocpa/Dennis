@@ -9,6 +9,23 @@ from .organism import Organism, OrganismPool
 from .genetics import Genome, BodyPlan
 from .behavior import BehaviorEvaluator, load_all_behaviors, mutate_behavior_file
 
+
+def _genetic_distance(g1, g2, genes=None) -> float:
+    """Average absolute difference in dominant alleles across key compatibility genes.
+    Returns a value in [0.0, 1.0]. Values > 0.25 indicate reproductive incompatibility.
+    """
+    COMPAT_GENES = [
+        'size', 'metabolism_rate', 'lung_ratio', 'can_attack',
+        'can_swim', 'can_dig', 'toxicity', 'tree_affinity', 'reproduction_mode',
+    ]
+    total = 0
+    for gene in COMPAT_GENES:
+        a = g1.get_dominant_allele(gene)
+        b = g2.get_dominant_allele(gene)
+        total += abs(a - b)
+    return total / (len(COMPAT_GENES) * 255.0)
+
+
 class Simulation:
     def __init__(self, seed: int = 42, initial_count: int = 100, spawning_density: int = 3):
         random.seed(seed)
@@ -683,8 +700,8 @@ class Simulation:
                 state.calories = min(body.calorie_capacity,
                                      state.calories + cal * efficiency * bite_size)
                 self.world.set_cell(nx, ny, nz, CellType.AIR)  # consumed
-                # Schedule regeneration: SOIL=60 ticks, WOOD=250 ticks
-                delay = 250 if ct == int(CellType.WOOD) else 60
+                # Schedule regeneration: SOIL=120 ticks, WOOD=500 ticks
+                delay = 500 if ct == int(CellType.WOOD) else 120
                 self._heapq.heappush(self._regen_heap,
                     (self.tick_count + delay, nx, ny, nz, ct))
                 return True
