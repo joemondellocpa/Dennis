@@ -819,14 +819,23 @@ class Simulation:
             'paused': self.paused,
         }
 
-    def spawn_clone(self, genome, x: int, y: int, z: int) -> 'Organism':
+    def spawn_clone(self, genome, x: int, y: int, z: int, flip_gender: bool = False) -> 'Organism':
         """Spawn a clone of the given genome at world coordinates (x, y, z).
 
         The clone has slightly mutated genome (asexual_reproduction with 0.02 rate).
+        If flip_gender=True and the organism is sexual, the gender allele is inverted
+        so successive pastes alternate between Gender A and Gender B.
         """
         from .genetics import Genome
         from .organism import Organism
         child_genome = Genome.asexual_reproduction(genome, mutation_rate=0.02)
+        # Flip gender for opposite-sex clones so a pair can reproduce
+        if flip_gender and child_genome.get_dominant_allele('reproduction_mode') >= 128:
+            orig_gender = child_genome.get_dominant_allele('gender')
+            if orig_gender >= 128:  # was Gender B → force Gender A
+                child_genome._alleles['gender'] = (64, 64)
+            else:                   # was Gender A → force Gender B
+                child_genome._alleles['gender'] = (192, 192)
         child = Organism(child_genome, x, y, z, species_id=0)
         child.state.calories = child.body.calorie_capacity * 0.8
         self.pool.add(child)

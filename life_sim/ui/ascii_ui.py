@@ -94,6 +94,7 @@ class AsciiUI:
 
         # God-mode clipboard state
         self._clipboard_genome = None   # genome copied for paste
+        self._clone_flip = False        # alternates gender on successive pastes
         self._status_msg = ''           # ephemeral status message shown in footer
         self._status_msg_ticks = 0      # countdown to clear status message
 
@@ -344,6 +345,7 @@ class AsciiUI:
         if key == ord('c') or key == ord('C'):
             if self.selected_organism and self.selected_organism.is_alive:
                 self._clipboard_genome = self.selected_organism.genome
+                self._clone_flip = False  # reset: first paste = same gender as original
                 self._set_status(f'Copied genome of org {hex(self.selected_organism.id)}')
             else:
                 self._set_status('No organism selected')
@@ -370,8 +372,18 @@ class AsciiUI:
                 wx = self.cursor_x
                 wy = self.cursor_y
                 wz = self.view_z
-                clone = self.sim.spawn_clone(self._clipboard_genome, wx, wy, wz)
-                self._set_status(f'Spawned clone {hex(clone.id)} at ({wx},{wy},{wz})')
+                clone = self.sim.spawn_clone(self._clipboard_genome, wx, wy, wz,
+                                             flip_gender=self._clone_flip)
+                # Determine gender label for status
+                is_sexual = clone.genome.get_dominant_allele('reproduction_mode') >= 128
+                if is_sexual:
+                    gv = clone.genome.get_dominant_allele('gender')
+                    gender_label = '\u2642 Gender B' if gv >= 128 else '\u2640 Gender A'
+                    gender_hint = f' [{gender_label}]'
+                else:
+                    gender_hint = ''
+                self._set_status(f'Spawned clone{gender_hint} at ({wx},{wy},{wz})')
+                self._clone_flip = not self._clone_flip  # alternate for next paste
             else:
                 self._set_status('No genome in clipboard — press C to copy first')
 
