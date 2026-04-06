@@ -328,20 +328,27 @@ class AsciiUI:
 
         # --- Shift+Left/Right: cycle through visible organisms ---
         if key == curses.KEY_SLEFT or key == curses.KEY_SRIGHT:
-            visible = self._get_visible_orgs()
-            if not visible:
-                self._set_status('No organisms visible')
-            else:
-                if self.selected_organism and self.selected_organism in visible:
-                    idx = visible.index(self.selected_organism)
+            try:
+                visible = self._get_visible_orgs()
+                if not visible:
+                    self._set_status('No organisms visible')
                 else:
-                    idx = -1 if key == curses.KEY_SRIGHT else 0
-                if key == curses.KEY_SRIGHT:
-                    idx = (idx + 1) % len(visible)
-                else:
-                    idx = (idx - 1) % len(visible)
-                self.selected_organism = visible[idx]
-                self._set_status(f'Selected org {idx+1}/{len(visible)}')
+                    # Find current index; treat dead/off-screen selected org as unset
+                    cur = self.selected_organism
+                    if cur and cur.is_alive and cur in visible:
+                        idx = visible.index(cur)
+                    else:
+                        idx = -1 if key == curses.KEY_SRIGHT else 0
+                    if key == curses.KEY_SRIGHT:
+                        idx = (idx + 1) % len(visible)
+                    else:
+                        idx = (idx - 1) % len(visible)
+                    self.selected_organism = visible[idx]
+                    self._gene_view_species = False  # reset to individual on new selection
+                    self._set_status(f'Selected org {idx+1}/{len(visible)}')
+            except Exception as e:
+                self._set_status(f'Selection error: {e}')
+            return False
 
         # --- A: toggle gene view between individual and species average ---
         if key == ord('a') or key == ord('A'):
@@ -418,6 +425,11 @@ class AsciiUI:
 
     def _render(self):
         """Full screen redraw."""
+        # Clear stale selection if the organism has died
+        if self.selected_organism is not None and not self.selected_organism.is_alive:
+            self.selected_organism = None
+            self._gene_view_species = False
+
         h, w = self.stdscr.getmaxyx()
         self.stdscr.erase()
 
