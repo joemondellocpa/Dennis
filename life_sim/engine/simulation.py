@@ -302,7 +302,7 @@ class Simulation:
             if nearest_prey_u is not None:
                 if nearest_dist_u <= attack_range_u:
                     armor_factor = 1.0 - nearest_prey_u.genome.phenotype('armor') * 0.6
-                    cal_gain = nearest_prey_u.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor
+                    cal_gain = nearest_prey_u.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor * 1.5
                     state.calories = min(body.calorie_capacity, state.calories + cal_gain)
                     if nearest_prey_u.genome.get_dominant_allele('toxicity') > 127:
                         state.calories = max(0, state.calories - 20)
@@ -554,7 +554,7 @@ class Simulation:
                     if dist <= attack_range:
                         # armor gene reduces calorie gain (prey absorbs up to 60% damage)
                         armor_factor = 1.0 - prey.genome.phenotype('armor') * 0.6
-                        cal_gain = prey.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor
+                        cal_gain = prey.body.calorie_capacity * org.genome.phenotype('calorie_efficiency') * armor_factor * 1.5
                         # pack_instinct: +50% bonus if a pack-mate recently attacked this prey
                         if org.genome.get_dominant_allele('pack_instinct') > 127:
                             # check if another living predator is within 5 cells of prey
@@ -676,7 +676,7 @@ class Simulation:
                 efficiency = org.genome.phenotype('calorie_efficiency')
                 # Larger organisms take bigger bites; still can't sustain on SOIL alone at size 15+
                 body = org.body
-                bite_size = max(10, body.total_cells * 0.5 + 5)
+                bite_size = max(10, body.total_cells * 1.2 + 5)
                 state.calories = min(body.calorie_capacity,
                                      state.calories + cal * efficiency * bite_size)
                 self.world.set_cell(nx, ny, nz, CellType.AIR)  # consumed

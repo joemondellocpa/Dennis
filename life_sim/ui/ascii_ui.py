@@ -179,13 +179,21 @@ class AsciiUI:
             self._species_scroll = 0
             return False
 
-        # Species screen: Up/Down scroll, any other key closes
+        # Species screen: Up/Down/PgUp/PgDn scroll, any other key closes
         if self.species_screen_visible:
             if key == curses.KEY_UP:
                 self._species_scroll = max(0, self._species_scroll - 1)
                 return False
             elif key == curses.KEY_DOWN:
                 self._species_scroll += 1
+                return False
+            elif key == curses.KEY_PPAGE:  # Page Up
+                page_size = getattr(self, '_species_page_size', 15)
+                self._species_scroll = max(0, self._species_scroll - page_size)
+                return False
+            elif key == curses.KEY_NPAGE:  # Page Down
+                page_size = getattr(self, '_species_page_size', 15)
+                self._species_scroll += page_size
                 return False
             # Any other key closes the species screen
             self.species_screen_visible = False
@@ -315,6 +323,23 @@ class AsciiUI:
             elif key == curses.KEY_RIGHT:
                 self.view_x = min(self.view_x + scroll, WORLD_W - max(view_w, 1))
 
+        # --- Shift+Left/Right: cycle through visible organisms ---
+        if key == curses.KEY_SLEFT or key == curses.KEY_SRIGHT:
+            visible = self._get_visible_orgs()
+            if not visible:
+                self._set_status('No organisms visible')
+            else:
+                if self.selected_organism and self.selected_organism in visible:
+                    idx = visible.index(self.selected_organism)
+                else:
+                    idx = -1 if key == curses.KEY_SRIGHT else 0
+                if key == curses.KEY_SRIGHT:
+                    idx = (idx + 1) % len(visible)
+                else:
+                    idx = (idx - 1) % len(visible)
+                self.selected_organism = visible[idx]
+                self._set_status(f'Selected org {idx+1}/{len(visible)}')
+
         # --- God-mode: C = copy genome, F = feed, K = kill, V = paste clone ---
         if key == ord('c') or key == ord('C'):
             if self.selected_organism and self.selected_organism.is_alive:
@@ -402,6 +427,20 @@ class AsciiUI:
         self._last_render_time = now
 
         self.stdscr.refresh()
+
+    def _get_visible_orgs(self) -> list:
+        """Return list of living organisms visible in the current viewport, sorted by screen position."""
+        h, w = self.stdscr.getmaxyx()
+        view_w = w - self.info_panel_width - 1
+        view_h = h - 2
+        visible = []
+        for org in self.sim.pool.living():
+            sx = org.state.x - self.view_x
+            sy = org.state.y - self.view_y
+            if 0 <= sx < view_w and 0 <= sy < view_h and org.state.z == self.view_z:
+                visible.append((sy, sx, org))
+        visible.sort()
+        return [o for _, _, o in visible]
 
     def _render_world_view(self, view_w: int, view_h: int):
         """Render the top-down z-slice view."""
@@ -530,6 +569,8 @@ class AsciiUI:
                 gender_val = org.genome.get_dominant_allele('gender')
                 behavior  = getattr(org.state, 'current_behavior', '?')
 
+                species_str = f"#{org.species_id & 0xFFFF:04x}"
+                put(f" Species: {species_str}")
                 put(f" Size:{size_val:<5}  Color:{org.display_color_pair}")
                 put(f" Age:{age_val:<6}  Maturity:{maturity}")
                 put(f" Cal: {cal_cur:.0f}/{cal_cap} ({cal_pct}%)")
@@ -830,7 +871,7 @@ class AsciiUI:
             pass
 
         # Column headers
-        header = f" {'ID':<6}  {'Pop':<5}  {'Extinct?':<14}  {'Age':<7}  Key Genes"
+        header = f" {'ID':<6}  {'Pop':<5}  {'Extinct?':<14}  {'Age':<7}  Size  Diet  Repro"
         try:
             self.stdscr.addstr(1, 0, header[:w - 1], attr_header)
         except curses.error:
@@ -853,8 +894,30 @@ class AsciiUI:
                 pass
             return
 
+        # Compute per-species averages from living organisms
+        species_size_sum = {}
+        species_size_cnt = {}
+        species_attack_sum = {}
+        species_repro_sum = {}
+        try:
+            for org in self.sim.pool.living():
+                sid = org.species_id
+                try:
+                    sz_allele = org.genome.get_dominant_allele('size')
+                    atk_allele = org.genome.get_dominant_allele('can_attack')
+                    rep_allele = org.genome.get_dominant_allele('reproduction_mode')
+                except Exception:
+                    continue
+                species_size_sum[sid] = species_size_sum.get(sid, 0) + sz_allele
+                species_size_cnt[sid] = species_size_cnt.get(sid, 0) + 1
+                species_attack_sum[sid] = species_attack_sum.get(sid, 0) + atk_allele
+                species_repro_sum[sid] = species_repro_sum.get(sid, 0) + rep_allele
+        except Exception:
+            pass
+
         # Clamp scroll
         max_rows = h - 4  # rows available for species data (rows 3..h-2, leave status)
+        self._species_page_size = max(1, max_rows - 1)
         max_scroll = max(0, len(species_list) - max_rows)
         self._species_scroll = min(self._species_scroll, max_scroll)
 
@@ -888,19 +951,39 @@ class AsciiUI:
             else:
                 ext_str = "alive"
 
-            # Key genes
-            try:
-                sz  = genome.get_dominant_allele('size')
-                mt  = genome.get_dominant_allele('metabolism_rate')
-                dig = 'Y' if genome.get_dominant_allele('can_dig')  > 127 else 'N'
-                sw  = 'Y' if genome.get_dominant_allele('can_swim') > 127 else 'N'
-                rm  = genome.get_dominant_allele('reproduction_mode')
-                sx  = 'S' if rm >= 128 else 'A'
-                genes_str = f"sz={sz:<3} mt={mt:<3} dig={dig} sw={sw} sx={sx}"
-            except Exception:
-                genes_str = "(genome unavailable)"
+            # Average size from living organisms (fall back to genome snapshot)
+            cnt = species_size_cnt.get(sid, 0)
+            if cnt > 0:
+                avg_sz = round(species_size_sum[sid] / cnt)
+            else:
+                try:
+                    avg_sz = genome.get_dominant_allele('size')
+                except Exception:
+                    avg_sz = '?'
 
-            line = f" {id_str:<6}  {pop:<5}  {ext_str:<14}  t:{age:<5}  {genes_str}"
+            # Diet type: predator if avg can_attack allele > 127
+            if cnt > 0:
+                avg_atk = species_attack_sum.get(sid, 0) / cnt
+                diet_str = 'pred' if avg_atk > 127 else 'herb'
+            else:
+                try:
+                    diet_str = 'pred' if genome.get_dominant_allele('can_attack') > 127 else 'herb'
+                except Exception:
+                    diet_str = '?'
+
+            # Reproduction mode: sexual if avg reproduction_mode allele >= 128
+            if cnt > 0:
+                avg_rep = species_repro_sum.get(sid, 0) / cnt
+                repro_str = 'sex' if avg_rep >= 128 else 'asex'
+            else:
+                try:
+                    rm = genome.get_dominant_allele('reproduction_mode')
+                    repro_str = 'sex' if rm >= 128 else 'asex'
+                except Exception:
+                    repro_str = '?'
+
+            line = (f" {id_str:<6}  {pop:<5}  {ext_str:<14}  t:{age:<5}"
+                    f"  sz:{avg_sz:<3} [{diet_str}|{repro_str}]")
             attr = attr_extinct if extinct else attr_alive
             try:
                 self.stdscr.addstr(row, 0, line[:w - 1], attr)
@@ -912,7 +995,7 @@ class AsciiUI:
         total = len(species_list)
         showing_end = min(self._species_scroll + max_rows, total)
         footer = (f" Showing {self._species_scroll + 1}-{showing_end} of {total} species"
-                  "  |  Up/Down to scroll  |  any other key to close")
+                  "  |  Up/Down/PgUp/PgDn to scroll  |  any other key to close")
         try:
             self.stdscr.addstr(footer_row, 0, footer[:w - 1], attr_title)
         except curses.error:

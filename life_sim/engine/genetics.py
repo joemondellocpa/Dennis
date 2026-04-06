@@ -249,13 +249,13 @@ class BodyPlan:
         self.brain_capacity: int = self.brain * 10
 
         # calorie_capacity: larger organisms store more energy.
-        self.calorie_capacity: float = round(total ** 1.5 * 5, 1)
+        self.calorie_capacity: float = round(total ** 1.6 * 4, 1)
 
         # calorie_cost_per_tick: baseline energy burn.
         # Floor of 0.02 per cell ensures even zero-metabolism organisms have some cost;
         # variance (0.08 range) preserves natural selection pressure on metabolism.
         metabolism_rate_norm = genome.phenotype('metabolism_rate')
-        self.calorie_cost_per_tick: float = round((total ** 1.2) * (0.02 + metabolism_rate_norm * 0.10), 3)
+        self.calorie_cost_per_tick: float = round((total ** 1.05) * (0.02 + metabolism_rate_norm * 0.08), 3)
 
         # Respiratory type
         self.has_lung: bool = genome.get_dominant_allele('lung_ratio') > 128
