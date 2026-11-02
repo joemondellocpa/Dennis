@@ -54,6 +54,39 @@ echo ""
 mkdir -p "$HOME/Library/LaunchAgents"
 mkdir -p "$LOG_DIR"
 
+# ── Config preflight ──────────────────────────────────────────────────────────
+# launchd relaunches on every crash, so a bad .env turns into an endless
+# restart loop. Catch it here instead.
+for key in DEEPSEEK_API_KEY TELEGRAM_BOT_TOKEN TELEGRAM_ALLOWED_USERS; do
+  val="$(grep -E "^${key}=" "$AGENT_DIR/.env" | tail -1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//; s/^["'\'']//; s/["'\'']$//' || true)"
+  if [[ -z "$val" || "$val" == your_* ]]; then
+    err "$key is missing or still a placeholder in .env. Run  python scripts/first_run.py  first."
+  fi
+done
+if ! (cd "$AGENT_DIR" && "$PYTHON" -c "import config" 2>"$LOG_DIR/preflight.log"); then
+  cat "$LOG_DIR/preflight.log" >&2
+  err "config.py failed to load (see above). Fix .env before installing the service."
+fi
+ok "Config preflight passed"
+
+# ── Stop any manually started instance ────────────────────────────────────────
+# A 'python main.py' left running in a terminal holds data/dennis.lock, which
+# makes the service instance exit on every launch.
+LOCK_FILE="$AGENT_DIR/data/dennis.lock"
+if [[ -f "$LOCK_FILE" ]] && command -v lsof &>/dev/null; then
+  HOLDERS="$(lsof -t "$LOCK_FILE" 2>/dev/null || true)"
+  if [[ -n "$HOLDERS" ]]; then
+    warn "Stopping running Dennis instance(s): $HOLDERS"
+    launchctl unload "$PLIST_FILE" 2>/dev/null || true
+    kill $HOLDERS 2>/dev/null || true
+    for _ in {1..10}; do
+      [[ -z "$(lsof -t "$LOCK_FILE" 2>/dev/null || true)" ]] && break
+      sleep 1
+    done
+    kill -9 $(lsof -t "$LOCK_FILE" 2>/dev/null || true) 2>/dev/null || true
+  fi
+fi
+
 # ── Write the plist ───────────────────────────────────────────────────────────
 cat > "$PLIST_FILE" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -79,9 +112,13 @@ cat > "$PLIST_FILE" << PLIST
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 
-    <!-- Auto-restart on crash -->
+    <!-- Auto-restart on crash only; a clean exit (e.g. another instance
+         already running) stays stopped instead of looping -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 
     <!-- Start at login -->
     <key>RunAtLoad</key>
@@ -106,14 +143,16 @@ info "Plist written: $PLIST_FILE"
 launchctl unload "$PLIST_FILE" 2>/dev/null || true
 launchctl load -w "$PLIST_FILE"
 
-# Give it a moment to start
-sleep 2
+# Give it long enough to crash if it's going to (imports + Telegram connect)
+sleep 8
 
-if launchctl list | grep -q "$PLIST_LABEL"; then
-  ok "Dennis is running as a background service!"
+SVC_PID="$(launchctl list | awk -v l="$PLIST_LABEL" '$3==l {print $1}')"
+if [[ -n "$SVC_PID" && "$SVC_PID" != "-" ]]; then
+  ok "Dennis is running as a background service (PID $SVC_PID)"
 else
-  warn "Service loaded but not yet listed – it may start momentarily."
-  info "Check with: launchctl list | grep dennis"
+  warn "Dennis is not running. It probably crashed on startup. Last log lines:"
+  tail -n 20 "$LOG_DIR/stderr.log" 2>/dev/null | sed 's/^/       /' || true
+  info "Stop the restart loop with:  bash scripts/install_service.sh --remove"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────

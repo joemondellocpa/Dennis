@@ -200,6 +200,8 @@ fi
 # Step 5 – Ollama (local LLM)
 # ═════════════════════════════════════════════════════════════════════════════
 step "5. Ollama (local LLM – reduces DeepSeek API costs)"
+# ollama serve logs into data/logs, so it has to exist before this step
+mkdir -p "$AGENT_DIR/data/logs"
 
 if ${SKIP_OLLAMA}; then
   info "Skipping Ollama (--skip-ollama flag set)"

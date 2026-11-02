@@ -35,7 +35,9 @@ def _acquire_instance_lock():
             "Another Dennis instance is already running – exiting to avoid Telegram 409 conflict.\n"
             f"If this is stale, delete {_LOCK_FILE} and restart."
         )
-        sys.exit(1)
+        # Exit 0 so launchd (KeepAlive SuccessfulExit=false) does not respawn
+        # us every ThrottleInterval while the other instance holds the lock.
+        sys.exit(0)
     _lock_fh.write(str(os.getpid()))
     _lock_fh.flush()
 from agent import Agent, Memory, local_llm
