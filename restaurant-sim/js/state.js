@@ -179,6 +179,8 @@ RS.defaultConfig = () => ({
   staff: { style: 45, experience: 55, servers: 4, bussers: 2, hosts: 1, cooks: 4, bartenders: 1 },
   owner: { role: 'floor', cooking: 50, business: 50, vibe: 50, detail: 70 },
   menu: { enabled: null, alcoholFocus: 55, priceAdj: 0, portion: 50 },
+  buying: { protein: 0, seafood: 0, dairy: 0, produce: 0, pantry: 0, bar: 0 },   // -1 budget, 0 house standard, 1 premium
+  happyHour: { type: 'none' },
   plays: [],              // {type:'push'|'discount'|'bogo'|'special', itemId, pct}
   delighters: {},
   goal: { type: 'margin', target: 12, nights: 14, debt: 20000 }
@@ -246,7 +248,42 @@ RS.itemPrice = (cfg, it) => {
 RS.ingredientCount = (cfg) => { const s = new Set(); RS.activeItems(cfg).forEach((i) => i.ingredients.forEach((g) => s.add(g))); return s.size; };
 /* More inventory lines means more spoilage, more ordering, smaller buys. Past ~45 lines it starts to bite. */
 RS.complexityMult = (cfg) => 1 + Math.max(0, RS.ingredientCount(cfg) - 45) * 0.0035;
-RS.itemCost = (cfg, it) => it.cost * RS.costMult(cfg) * RS.complexityMult(cfg);
+/* Where the money goes by ingredient family, and how quickly a guest notices a cheaper version. */
+RS.INGR_CATS = [
+  { id: 'protein', label: 'Meat and poultry', w: 4, notice: 1.0, tell: 'Noticed immediately. It is the center of the plate.' },
+  { id: 'seafood', label: 'Fish and shellfish', w: 4, notice: 1.0, tell: 'Noticed immediately, and it ends up in reviews.' },
+  { id: 'bar', label: 'Wine, beer and spirits', w: 3, notice: 0.5, tell: 'Drinkers notice. Everyone else does not.' },
+  { id: 'dairy', label: 'Cheese, butter, eggs', w: 2, notice: 0.55, tell: 'Noticed on cheese-forward dishes, hidden in sauces.' },
+  { id: 'produce', label: 'Fresh produce and herbs', w: 1, notice: 0.4, tell: 'Noticed in salads and garnishes, less so once cooked.' },
+  { id: 'pantry', label: 'Pantry staples', w: 0.6, notice: 0.06, tell: 'Flour, oil, sugar, stock. Almost nobody can tell.' }
+];
+const CAT_RE = [
+  ['pantry', /-stock$|-sauce$|-oil$|-fat$|vinegar|-flour$|-rice$|-wrapper$|-syrup$|-chips$/],
+  ['protein', /beef|steak|ribeye|strip-loin|chicken|pork|lamb|veal|duck|bacon|pancetta|prosciutto|foie|snails/],
+  ['seafood', /branzino|cod$|toro|tuna|salmon|sea-bass|^sole$|shrimp|crab|lobster|clams|mussels|squid|^eel$|yellowtail|tobiko|anchovy/],
+  ['bar', /barolo|cabernet|chardonnay|chianti|cotes|pinot|prosecco|red-blend|sauvignon|champagne|sparkling-wine|sake|blonde-ale|^ipa$|lager|bourbon|^gin$|^rye$|vodka|tequila|whisky|cognac|vermouth|aperitivo|liqueur|bitter|cassis|plum-wine|marsala|^red-wine$|^white-wine$/],
+  ['dairy', /cheese|burrata|brie|cheddar|comte|gorgonzola|gruyere|mozzarella|parmesan|pecorino|ricotta|roquefort|mascarpone|butter|cream|^milk$|^egg$|quail-egg/],
+  ['pantry', /flour|sugar|salt|spaghetti|linguine|tagliatelle|macaroni|lasagna|noodles|soy|mirin|miso|dashi|ketchup|mayonnaise|bread|panko|cornmeal|starch|cocoa|chocolate|^vanilla$|cinnamon|nutmeg|paprika|chili|sesame|brioche|shells|crust|pastry|graham|oats|gelatin|cola|sparkling-water|ginger-beer|tea$|espresso|honey|dijon|capers|pickle|cornichon|roux|ladyfingers|polenta|farro|chickpea|cannellini|tahini|nori|wakame|bonito|pecan|walnut|pistachio|red-bean|peppercorn|agave/]
+];
+const catCache = {};
+RS.ingrCat = (id) => catCache[id] || (catCache[id] = (CAT_RE.find((c) => c[1].test(id)) || ['produce'])[0]);
+RS.GRADE = { '-1': { label: 'Budget', cost: 0.76 }, 0: { label: 'House standard', cost: 1 }, 1: { label: 'Premium', cost: 1.28 } };
+/* For one dish: what the buying choices do to its cost, and how far its quality moves in a way a guest can tell (-1..1). */
+RS.itemBuy = (cfg, it) => {
+  const b = cfg.buying || {}; let w = 0, cost = 0, q = 0;
+  it.ingredients.forEach((g) => { const c = RS.INGR_CATS.find((x) => x.id === RS.ingrCat(g)), gr = b[c.id] || 0; w += c.w; cost += c.w * RS.GRADE[gr].cost; q += c.w * c.notice * gr; });
+  return w ? { cost: cost / w, q: q / w } : { cost: 1, q: 0 };
+};
+RS.buyQuality = (cfg) => { const l = RS.activeItems(cfg); let w = 0, q = 0; l.forEach((i) => { w += i.appeal; q += i.appeal * RS.itemBuy(cfg, i).q; }); return w ? q / w : 0; };
+RS.itemCost = (cfg, it) => it.cost * RS.costMult(cfg) * RS.complexityMult(cfg) * RS.itemBuy(cfg, it).cost;
+
+RS.HH_END = 95;   // 6:35 pm
+RS.HH_TYPES = [
+  { id: 'none', label: 'No happy hour', drink: 1, starter: 1, pull: 0, desc: 'Doors open at five and the room fills when it fills.' },
+  { id: 'drinks', label: 'Half-price drinks until 6:30', drink: 0.5, starter: 1, pull: 1.0, desc: 'Fills the bar early. Drinks carry the margin to absorb it, but early diners get the discount too.' },
+  { id: 'bites', label: 'Bar bites: 40% off starters until 6:30', drink: 1, starter: 0.6, pull: 0.7, desc: 'Smaller crowd, full-price drinks. The kitchen works harder before the rush.' },
+  { id: 'both', label: '30% off drinks and starters until 6:30', drink: 0.7, starter: 0.7, pull: 1.1, desc: 'The biggest draw and the most given away.' }
+];
 
 RS.seatCount = (cfg) => [2, 4, 6, 8].reduce((s, n) => s + n * (cfg.tables[n] || 0), 0) + (cfg.room.bar.on ? cfg.room.bar.seats : 0);
 RS.suggestStaff = (cfg) => {
@@ -268,7 +305,7 @@ RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0,
 /* The public rating guests see online. It follows reputation, which follows how people felt when they left. */
 RS.stars = (rep) => RS.clamp(2.4 + 2.5 * rep, 1, 5);
 /* What guests have come to expect from this place. It drifts slowly, so a sudden cut gets noticed. */
-RS.expectNow = (cfg) => ({ sourcing: cfg.sourcing, portion: cfg.menu.portion, priceAdj: cfg.menu.priceAdj, delight: RS.DELIGHTERS.filter((d) => cfg.delighters[d.id]).length });
+RS.expectNow = (cfg) => ({ sourcing: cfg.sourcing + 70 * RS.buyQuality(cfg), portion: cfg.menu.portion, priceAdj: cfg.menu.priceAdj, delight: RS.DELIGHTERS.filter((d) => cfg.delighters[d.id]).length });
 RS.closeNight = (game, r) => {
   game.history.push(r); game.cash += r.profit; game.reputationPrev = game.reputation; game.reputation = r.reputationNext;
   if (game.debtLeft > 0) game.debtLeft = Math.max(0, game.debtLeft - Math.max(0, r.profit));

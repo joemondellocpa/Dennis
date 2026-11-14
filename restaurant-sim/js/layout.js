@@ -104,6 +104,12 @@
     return { tables: placed, missing, geom: g };
   };
 
+  /* Where a party sits, including any tables pushed together for them. */
+  RS.partySpots = (p) => {
+    const ts = [p.table].concat(p.table.joined || []); let left = p.size; const out = [];
+    ts.forEach((t, i) => { const n = i === ts.length - 1 ? left : Math.min(left, t.seats); if (n > 0) RS.seatSpots(t, n).forEach((s) => out.push(s)); left -= n; });
+    return out;
+  };
   /* Seat positions around a table, used for drawing diners. */
   RS.seatSpots = (t, n) => {
     if (t.bar) return t.stools.slice(0, n);

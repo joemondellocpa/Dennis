@@ -22,12 +22,30 @@
     c.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     c.font = Math.max(9, Math.min(12, s * 0.42)) + 'px system-ui, sans-serif'; c.textBaseline = 'middle'; c.textAlign = 'center';
 
-    // Floor. The light slider sets how bright the room reads.
-    const li = cfg.atmosphere.light / 100, f = Math.round(RS.lerp(30, 92, li));
-    c.fillStyle = 'rgb(' + f + ',' + Math.round(f * 0.9) + ',' + Math.round(f * 0.78) + ')';
-    rr(c, v.X(0), v.Y(0), room.w * s, room.h * s, 4); c.fill();
-    c.strokeStyle = '#b79a62'; c.lineWidth = 2; c.stroke();
-    const ink = li > 0.6 ? '#2b241a' : '#e8dfcc';
+    // Floor and furniture follow the atmosphere: casual rooms get wood planks and bare tables, the middle gets tile,
+    // formal rooms get deep red carpet and white cloths. The light slider sets how bright it all reads.
+    const li = cfg.atmosphere.light / 100, fo = cfg.atmosphere.formality / 100;
+    const look = fo > 0.62 ? 'formal' : (fo < 0.4 ? 'casual' : 'mid');
+    const floorL = look === 'formal' ? RS.lerp(12, 34, li) : (look === 'casual' ? RS.lerp(17, 58, li) : RS.lerp(17, 66, li));
+    const floorHS = look === 'formal' ? '354,' + Math.round(RS.lerp(38, 55, fo)) + '%' : (look === 'casual' ? '28,34%' : '36,9%');
+    const X0 = v.X(0), Y0 = v.Y(0), RW = room.w * s, RH = room.h * s;
+    c.save(); rr(c, X0, Y0, RW, RH, 4); c.clip();
+    c.fillStyle = 'hsl(' + floorHS + ',' + floorL + '%)'; c.fillRect(X0, Y0, RW, RH);
+    c.strokeStyle = 'hsla(' + floorHS + ',' + (floorL + (floorL > 45 ? -9 : 7)) + '%,0.7)'; c.lineWidth = 1; c.beginPath();
+    if (look === 'casual') { for (let y = 0.35; y < room.h; y += 0.35) { c.moveTo(X0, v.Y(y)); c.lineTo(X0 + RW, v.Y(y)); } for (let y = 0, k = 0; y < room.h; y += 0.35, k++) for (let x = (k % 3) * 0.9 + 0.4; x < room.w; x += 2.7) { c.moveTo(v.X(x), v.Y(y)); c.lineTo(v.X(x), v.Y(y + 0.35)); } }
+    else if (look === 'mid') { for (let x = 0.8; x < room.w; x += 0.8) { c.moveTo(v.X(x), Y0); c.lineTo(v.X(x), Y0 + RH); } for (let y = 0.8; y < room.h; y += 0.8) { c.moveTo(X0, v.Y(y)); c.lineTo(X0 + RW, v.Y(y)); } }
+    else { for (let d = -room.h; d < room.w; d += 1.1) { c.moveTo(v.X(d), Y0); c.lineTo(v.X(d + room.h), Y0 + RH); c.moveTo(v.X(d + room.h), Y0); c.lineTo(v.X(d), Y0 + RH); } }
+    c.stroke();
+    if (li < 0.45) {   // low light: the edges of the room fall away
+      const gr = c.createRadialGradient(X0 + RW / 2, Y0 + RH / 2, Math.min(RW, RH) * 0.25, X0 + RW / 2, Y0 + RH / 2, Math.max(RW, RH) * 0.7);
+      gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,' + (0.55 - li).toFixed(2) + ')'); c.fillStyle = gr; c.fillRect(X0, Y0, RW, RH);
+    }
+    c.restore();
+    rr(c, X0, Y0, RW, RH, 4); c.strokeStyle = look === 'formal' ? '#c9a24a' : '#8f7a55'; c.lineWidth = 2; c.stroke();
+    const ink = floorL > 46 ? '#2b241a' : '#efe6d2';
+    const topL = look === 'formal' ? RS.lerp(74, 97, li) : (look === 'casual' ? RS.lerp(40, 72, li) : RS.lerp(17, 30, li));
+    const topCol = 'hsl(' + (look === 'formal' ? '42,30%' : (look === 'casual' ? '34,48%' : '22,38%')) + ',' + topL + '%)', topInk = topL > 50 ? '#1b1610' : '#efe6d2';
+    const chairCol = look === 'formal' ? 'hsl(354,30%,' + RS.lerp(20, 30, li) + '%)' : (look === 'casual' ? 'hsl(28,25%,' + RS.lerp(26, 40, li) + '%)' : 'hsl(30,8%,' + RS.lerp(30, 48, li) + '%)');
 
     // Kitchen band with stations.
     if (sim) {
@@ -67,15 +85,21 @@
       g.bar.stools.forEach((p) => dot(c, v.X(p.x), v.Y(p.y), s * 0.2, 'rgba(0,0,0,0)', ink));
     }
 
-    // Tables.
+    // Tables. The fill is the furniture; the outline carries the table's state during service.
+    const stOf = (t) => (sim ? (t.party && t.state === 'taken' ? (t.party.state === 'toTable' ? 'taken' : t.party.state) : t.state) : 'empty');
+    layout.tables.forEach((t) => {   // tables pushed together for one party
+      (t.joined || []).forEach((j) => { c.strokeStyle = topCol; c.lineWidth = Math.min(t.h, j.h) * s * 0.7; c.beginPath(); c.moveTo(v.X(t.cx), v.Y(t.cy)); c.lineTo(v.X(j.cx), v.Y(j.cy)); c.stroke(); });
+    });
     layout.tables.forEach((t) => {
-      const st = sim ? (t.party && t.state === 'taken' ? (t.party.state === 'toTable' ? 'taken' : t.party.state) : t.state) : 'empty';
-      const col = TABLE_COLOR[st] || null;
+      const col = TABLE_COLOR[stOf(t)] || null;
       if (t.bar) { if (sel === t) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.strokeRect(v.X(t.cx) - s * 0.7, v.Y(t.cy) - s * 0.45, s * 1.4, s * 0.9); } return; }
-      RS.seatSpots(t, t.seats).forEach((p) => { c.fillStyle = li > 0.6 ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.13)'; c.fillRect(v.X(p.x) - s * 0.16, v.Y(p.y) - s * 0.16, s * 0.32, s * 0.32); });
-      c.fillStyle = col || (li > 0.6 ? '#fbf7ee' : '#4a4034'); rr(c, v.X(t.x), v.Y(t.y), t.w * s, t.h * s, 3); c.fill();
-      c.strokeStyle = sel === t ? '#ffffff' : 'rgba(0,0,0,0.35)'; c.lineWidth = sel === t ? 2.5 : 1; c.stroke();
-      c.fillStyle = col ? '#1b1610' : ink; c.fillText(sim ? String(t.id + 1) : t.seats, v.X(t.cx), v.Y(t.cy));
+      RS.seatSpots(t, t.seats).forEach((p) => { c.fillStyle = chairCol; rr(c, v.X(p.x) - s * 0.17, v.Y(p.y) - s * 0.17, s * 0.34, s * 0.34, 2); c.fill(); });
+      const d = look === 'formal' ? 0.07 : 0;   // a cloth hangs a little over the edge
+      if (li < 0.45 && sim) { const gl = c.createRadialGradient(v.X(t.cx), v.Y(t.cy), 0, v.X(t.cx), v.Y(t.cy), s * 1.5); gl.addColorStop(0, 'rgba(255,190,90,' + (0.38 - li * 0.6).toFixed(2) + ')'); gl.addColorStop(1, 'rgba(255,190,90,0)'); c.fillStyle = gl; c.fillRect(v.X(t.cx) - s * 1.5, v.Y(t.cy) - s * 1.5, s * 3, s * 3); }
+      c.fillStyle = topCol; rr(c, v.X(t.x - d), v.Y(t.y - d), (t.w + 2 * d) * s, (t.h + 2 * d) * s, look === 'formal' ? 1 : 3); c.fill();
+      c.strokeStyle = sel === t ? '#ffffff' : (col || 'rgba(0,0,0,0.35)'); c.lineWidth = sel === t ? 3 : (col ? Math.max(3, s * 0.13) : 1); c.stroke();
+      if (li < 0.45) dot(c, v.X(t.cx + t.w * 0.3), v.Y(t.cy), Math.max(1.5, s * 0.06), '#ffd98a');
+      c.fillStyle = topInk; c.fillText(sim ? String(t.id + 1) : t.seats, v.X(t.cx), v.Y(t.cy));
     });
 
     if (!sim) return v;
@@ -84,7 +108,7 @@
     const R = s * 0.2;
     sim.parties.forEach((p) => {
       const seated = p.table && !p.target && p.state !== 'leaving' && p.state !== 'toTable';
-      if (seated) RS.seatSpots(p.table, p.size).forEach((q) => dot(c, v.X(q.x), v.Y(q.y), R, p.demo.color, '#1b1610'));
+      if (seated) RS.partySpots(p).forEach((q) => dot(c, v.X(q.x), v.Y(q.y), R, p.demo.color, '#1b1610'));
       else for (let i = 0; i < p.size; i++) dot(c, v.X(p.x + (i % 3) * 0.32 - 0.3), v.Y(p.y + Math.floor(i / 3) * 0.32), R, p.demo.color, p.walked ? '#ff3b3b' : '#1b1610');
     });
     // Staff, drawn as squares so they never read as guests.

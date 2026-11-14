@@ -77,6 +77,36 @@
     if (r.turnedAway > 0) add({ tag: 'Capacity', value: r.turnedAway * r.avgCheck * 0.6, title: 'No table for ' + r.turnedAway + ' guests in large parties', body: 'Big groups arrived and nothing could seat them. Large parties spend more per head on drinks. One 8-top, or two 4-tops kept adjacent, catches them.',
       action: { label: 'Add an 8-top', apply: (c) => { c.tables[8] = (c.tables[8] || 0) + 1; c.manualLayout = null; } } });
 
+    // Tables that did not match the parties.
+    if (r.joins >= 3) add({ tag: 'Tables', value: r.joins * 6 + (r.walkEmpty || 0) * r.avgCheck * 0.3, title: 'Staff pushed tables together ' + r.joins + ' times',
+      body: 'Groups kept arriving that no single table could take, so the floor team joined small tables for them. It works, but each join costs a couple of minutes at the door and strands odd chairs.' + (r.idleSmallMin > 60 ? ' Two-tops sat empty for ' + Math.round(r.idleSmallMin) + ' table-minutes while groups of three or more waited.' : '') + ' The room wants fewer two-tops and more fours.',
+      action: (cfg.tables[2] || 0) >= 4 ? { label: 'Trade four 2-tops for two 4-tops', apply: (c) => { c.tables[2] -= 4; c.tables[4] = (c.tables[4] || 0) + 2; c.manualLayout = null; } } : null });
+    if (r.walkEmpty > 0) add({ tag: 'Tables', value: r.walkEmpty * r.avgCheck * 0.6, title: r.walkEmpty + ' guests left while tables sat empty',
+      body: 'They gave up waiting with free tables in the room, because the free ones were the wrong size for them, too far apart to join, or the host could not get to them in time. That is about ' + RS.money(r.walkEmpty * r.avgCheck) + ' walking out past empty chairs. Keeping small tables in pairs, close enough to push together, lets the floor absorb a group of four or five.' });
+
+    // Happy hour.
+    const hh = r.hh || {};
+    if (hh.type && hh.type !== 'none') {
+      if (hh.net < 40) add({ tag: 'Happy hour', value: Math.max(30, -hh.net), title: 'Happy hour is not paying for itself', body: 'It brought ' + hh.covers + ' guests and ' + RS.money(hh.rev) + ' in sales, but ' + RS.money(hh.leak) + ' of discount went to diners who were coming anyway. After the cost of what was poured and plated it nets ' + RS.money(hh.net) + '.' + (hh.type !== 'bites' ? ' Discounting food instead of drinks gives less away, since drinks are where your margin is.' : ' It may simply not suit this room.'),
+        action: hh.type !== 'bites' ? { label: 'Switch to bar bites', apply: (c) => { c.happyHour.type = 'bites'; } } : { label: 'Drop happy hour', apply: (c) => { c.happyHour.type = 'none'; } } });
+      else good.push('Happy hour brought ' + hh.covers + ' early guests and netted ' + RS.money(hh.net) + ' after discounts. ' + hh.stayed + ' of them stayed for dinner.');
+    } else if (cfg.room.bar.on && r.dow < 5 && r.turns < 1.5 && r.walkouts === 0) add({ tag: 'Happy hour', value: 60, title: 'The first ninety minutes are empty', body: 'On a ' + r.dayName + ' the room does not fill until seven, and the staff are already on the clock. A happy hour puts people at the bar from five. Bar bites give away the least.',
+      action: { label: 'Try bar bites until 6:30', apply: (c) => { c.happyHour.type = 'bites'; } } });
+
+    // Delighters that are not earning their keep.
+    (r.delighters || []).forEach((d) => {
+      const worth = RS.delightWorth(game, r, d), cost = d.cost + d.givesUp;
+      if (worth < cost * 0.6 && cost > 15) add({ tag: 'Delighters', value: cost - worth, title: d.name + ' is not moving the needle', body: 'It cost ' + RS.money(cost) + ' tonight' + (d.givesUp ? ' including the drink sales it replaces' : '') + ', added ' + d.mood.toFixed(1) + ' points of guest mood and was mentioned in ' + d.mentions + ' of ' + r.reviews + ' reviews. ' + (game.reputation > 0.9 ? 'Your rating is already near the top, so there is little left for it to lift.' : 'At that rate it returns about ' + RS.money(worth) + ' a night in future sales.'),
+        action: { label: 'Stop offering it', apply: (c) => { c.delighters[d.id] = false; } } });
+    });
+
+    // What guests photograph and talk about.
+    const shot = food.concat(rows.filter((x) => x.it.course === 'drink')).map((x) => ({ x, n: (r.items[x.it.id] || {}).photos || 0 })).sort((a, b) => b.n - a.n)[0];
+    if (shot && shot.n >= 4 && shot.x.qty < r.covers * 0.12 && !RS.playFor(cfg, shot.x.it.id)) add({ tag: 'Word of mouth', value: shot.x.cm * 4, title: shot.x.it.name + ' is your most photographed plate', body: shot.n + ' of the ' + shot.x.qty + ' sold tonight ended up in somebody\'s photos. That is free advertising for a dish only ' + RS.pct(shot.x.qty / r.covers) + ' of guests order. Make it the special and let it travel.',
+      action: { label: 'Feature it as the special', apply: (c) => { c.plays.push({ type: 'special', itemId: shot.x.it.id }); } } });
+    const panned = food.map((x) => ({ x, n: (r.items[x.it.id] || {}).neg || 0 })).sort((a, b) => b.n - a.n)[0];
+    if (panned && panned.n >= 2) add({ tag: 'Word of mouth', value: panned.n * 25, title: panned.x.it.name + ' is drawing complaints', body: panned.n + ' reviews tonight singled it out.' + (RS.itemBuy(cfg, panned.x.it).q < -0.2 ? ' It leans on ingredients you are buying at budget grade, and guests can tell on this dish.' : ' Check the plate before it leaves the pass.') });
+
     // 5. Floor staffing.
     if (r.serverUtil < 0.3 && cfg.staff.servers > 2 && r.greetWait < 3) add({ tag: 'Labor', value: 7 * 11 * wm, title: 'One server too many for a ' + r.dayName, body: 'Servers were on a task ' + RS.pct(r.serverUtil) + ' of the shift and tables were greeted in ' + r.greetWait.toFixed(1) + ' minutes. Cutting one saves ' + RS.money(7 * 11 * wm) + ' in wages and gives the rest better tips.' + (locked('diner.touch') ? ' Your hands-on service standard still holds at this level.' : ''),
       action: { label: 'Schedule one fewer server', apply: (c) => { c.staff.servers--; } } });
@@ -115,7 +145,7 @@
     const d = r.drop || {}, exq = { sourcing: Math.max(50, top('sourcing')), portion: Math.max(50, top('portion')), priceAdj: low('priceAdj') }, fall = RS.stars(r.reputationNext) - RS.stars(game.reputation);
     const lost = (pts) => r.revenue * 0.9 * (pts / 30 * 0.11) * 7;   // a week of this mood, turned into lost sales per night
     if (d.quality > 1.5) add({ tag: 'Reputation', value: lost(d.quality) + 60, title: 'Guests can taste the cheaper ingredients', body: 'Buying down saved roughly ' + RS.money(r.cogs * (exq.sourcing - cfg.sourcing) / 100 * 0.45) + ' on tonight\'s plates and cost ' + d.quality.toFixed(0) + ' points of guest mood. Mood becomes reviews, reviews become the public rating, and the rating decides how many people come next week. Keep this up for a week and it costs about ' + RS.money(lost(d.quality)) + ' a night in sales that never walk in.',
-      action: { label: 'Go back to the ingredients guests expect', apply: (c) => { c.sourcing = Math.round(exq.sourcing); } } });
+      action: { label: 'Go back to the ingredients guests expect', apply: (c) => { c.sourcing = Math.min(100, Math.max(c.sourcing, Math.round(exq.sourcing))); Object.keys(c.buying).forEach((k) => { if (c.buying[k] < 0) c.buying[k] = 0; }); } } });
     if (d.portion > 1.5) add({ tag: 'Reputation', value: lost(d.portion) + 50, title: 'The plates got smaller and people noticed', body: 'Tighter portions trimmed plate cost and took ' + d.portion.toFixed(0) + ' points off guest mood. Regulars compare tonight with last month. The reviews that follow mention value, and that is the word that empties a room.',
       action: { label: 'Restore the portions', apply: (c) => { c.menu.portion = Math.round(exq.portion); } } });
     if (d.price > 1.5) add({ tag: 'Reputation', value: lost(d.price) + 40, title: 'The price rise landed badly', body: 'Prices went up faster than guests were ready for, costing ' + d.price.toFixed(0) + ' points of mood. Increases stick when they are small and the experience moves with them. Two or three percent at a time is invisible; fifteen is a review.',
@@ -123,7 +153,7 @@
     if (d.delight > 1.5) add({ tag: 'Reputation', value: lost(d.delight) + 30, title: 'Guests miss what you took away', body: 'Something they were used to getting is gone, and it cost ' + d.delight.toFixed(0) + ' points of mood. The small free things are the ones regulars mention first.' });
     const worst = Object.entries(r.gripes || {}).sort((a, b) => b[1] - a[1])[0];
     if ((fall < -0.02 || (worst && worst[1] > 3)) && worst && worst[1] > 1 && !out.some((n) => n.tag === 'Reputation')) {
-      const fix = { quality: cfg.sourcing < exq.sourcing ? { label: 'Buy better ingredients again', apply: (c) => { c.sourcing = Math.round(exq.sourcing); } } : null, portion: cfg.menu.portion < exq.portion ? { label: 'Restore the portions', apply: (c) => { c.menu.portion = Math.round(exq.portion); } } : null, price: cfg.menu.priceAdj > exq.priceAdj ? { label: 'Take prices back to where they were', apply: (c) => { c.menu.priceAdj = Math.round(exq.priceAdj); } } : null }[worst[0]];
+      const fix = { quality: (cfg.sourcing < exq.sourcing || Object.values(cfg.buying).some((g) => g < 0)) ? { label: 'Buy better ingredients again', apply: (c) => { c.sourcing = Math.min(100, Math.max(c.sourcing, Math.round(exq.sourcing))); Object.keys(c.buying).forEach((k) => { if (c.buying[k] < 0) c.buying[k] = 0; }); } } : null, portion: cfg.menu.portion < exq.portion ? { label: 'Restore the portions', apply: (c) => { c.menu.portion = Math.round(exq.portion); } } : null, price: cfg.menu.priceAdj > exq.priceAdj ? { label: 'Take prices back to where they were', apply: (c) => { c.menu.priceAdj = Math.round(exq.priceAdj); } } : null }[worst[0]];
       const why = { wait: 'waiting: for a table, for a server, for the check', kitchen: 'slow food', price: 'prices that feel too high for what arrives', quality: 'the quality of the food', portion: 'small portions', room: 'a room that does not suit the people it attracts', extras: 'things that used to be included' }[worst[0]];
       add({ tag: 'Reputation', value: lost(Math.max(3, worst[1])) + 40, title: 'Your public rating is slipping', body: 'Tonight moves it from ' + RS.stars(game.reputation).toFixed(1) + ' to ' + RS.stars(r.reputationNext).toFixed(1) + ' stars. The biggest complaint was ' + why + '. Traffic follows the rating with a lag, so the cost of tonight shows up next week.', action: fix || undefined });
     }
@@ -154,13 +184,16 @@
     return { notes: out.slice(0, n), hidden: Math.max(0, out.length - n), good, rows };
   };
 
+  /* What a delighter is worth: mood lifts the rating, the rating lifts traffic. Nothing if the rating has no room left. */
+  RS.delightWorth = (game, r, d) => r.revenue * 0.9 * (d.mood / 30 * 0.11) * 5 * 0.55 * (game.reputation > 0.97 ? 0.15 : 1);
+
   /* Menu engineering quadrant for a row within its course. */
   RS.quadrants = (rows) => {
     const by = {};
     rows.forEach((x) => { (by[x.it.course] = by[x.it.course] || []).push(x); });
     Object.values(by).forEach((l) => {
       const aq = l.reduce((a, x) => a + x.qty, 0) / l.length, ac = l.reduce((a, x) => a + x.cm, 0) / l.length;
-      l.forEach((x) => { x.quad = x.qty >= aq * 0.9 ? (x.cm >= ac ? 'Star' : 'Workhorse') : (x.cm >= ac ? 'Puzzle' : 'Dog'); });
+      l.forEach((x) => { x.quadKey = x.qty >= aq * 0.9 ? (x.cm >= ac ? 'star' : 'workhorse') : (x.cm >= ac ? 'puzzle' : 'dog'); x.quad = { star: 'Star', workhorse: 'Crowd-pleaser', puzzle: 'Hidden gem', dog: 'Dead weight' }[x.quadKey]; });
     });
     return rows;
   };

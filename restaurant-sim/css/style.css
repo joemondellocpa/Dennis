@@ -99,7 +99,7 @@ table.pl td { padding: 5px 4px; } table.pl tr.tot td { border-top: 1px solid var
 .legend i, .dot, .sq { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; } .dot, .legend i.dot { border-radius: 50%; }
 .side { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-y: auto; min-height: 0; }
 .clock { display: flex; justify-content: space-between; align-items: baseline; } .clock b { font: 400 30px var(--serif); color: var(--brass); } .clock span { color: var(--muted); }
-.speed { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; }
+.speed { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0; }
 .speed button { font-weight: 700; letter-spacing: 2px; font-size: 15px !important; }
 .speed button, .tabs button { background: var(--panel2); border: 1px solid var(--line); padding: 6px 4px; font-size: 13px; }
 .speed button.on, .tabs button.on { background: var(--brass); color: #1b1610; border-color: var(--brass); font-weight: 600; }
@@ -117,6 +117,8 @@ table.pl td { padding: 5px 4px; } table.pl tr.tot td { border-top: 1px solid var
 .note b { font-size: 16px; display: block; margin: 4px 0; } .note p { color: #cfc6b2; margin-bottom: 8px; }
 .tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--brass); }
 .val { float: right; font-style: normal; color: var(--good); font-size: 13px; }
+table.mini.wide { width: 100%; } table.mini tr.hd td { color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); } table.mini.wide td { padding: 5px 6px; }
+table.buy td { vertical-align: middle; } .btnrow .ghost { padding: 5px 10px; font-size: 13px; white-space: nowrap; } .btnrow .ghost.on { background: var(--brass); color: #1b1610; border-color: var(--brass); font-weight: 600; }
 .quote { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; margin: 8px 0; font-family: var(--serif); font-size: 16px; color: var(--ink) !important; } .quote.bad { border-color: var(--bad); } .quote.good { border-color: var(--good); }
 .good-list { margin: 0; padding-left: 18px; } .good-list li { margin-bottom: 6px; }
 .goal { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--brass); border-radius: 8px; padding: 12px 16px; margin: 10px 0; display: grid; gap: 4px; }
