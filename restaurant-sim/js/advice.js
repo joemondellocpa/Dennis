@@ -51,11 +51,22 @@
       add({ tag: 'Kitchen', value: r.lateTickets * 5, title: 'The line ran out of hands', body: r.lateTickets + ' of ' + r.tickets + ' tickets ran late and mains averaged ' + r.mainTicket.toFixed(0) + ' minutes. Stations had room; cooks did not. One more cook costs about ' + RS.money(8 * 25 * wm) + ', or swap two cooked-to-order mains for batch dishes that only need plating.',
         action: { label: 'Add a line cook', apply: (c) => { c.staff.cooks++; } } });
     } else if (r.lateTickets >= 5 && stWait && stWait[1] > 45) {
-      const name = stWait[0], onIt = food.filter((x) => x.it.station === name && x.it.prep !== 'batch').sort((a, b) => a.cm * a.qty - b.cm * b.qty);
-      add({ tag: 'Kitchen', value: r.lateTickets * 5, title: RS.STATION_LABEL[name] + ' was the bottleneck',
-        body: 'Orders queued ' + Math.round(stWait[1]) + ' plate-minutes waiting for space on ' + RS.STATION_LABEL[name].toLowerCase() + ' (' + r.stationCap[name] + ' at a time). ' + r.lateTickets + ' tickets ran late. ' + onIt.length + ' dishes compete for it.' +
-          (onIt.length > 2 ? ' ' + onIt[0].it.name + ' earns the least for the space it takes.' : '') + ' A bigger line fixes it with rent; a menu that leans on other stations fixes it for free.',
-        action: onIt.length > 2 ? { label: 'Drop ' + onIt[0].it.name, apply: (c) => { c.menu.enabled[onIt[0].it.id] = false; } } : { label: 'Build a larger line', apply: (c) => { c.room.line = 'large'; } } });
+      const name = stWait[0], lab = RS.STATION_LABEL[name], low = lab.toLowerCase();
+      // Every dish that needs this station, with what it earns for each minute it holds a burner.
+      const onIt = food.filter((x) => x.it.station === name && x.it.prep !== 'batch').map((x) => Object.assign({ min: x.qty * x.it.cookMin, per: x.cm / Math.max(1, x.it.cookMin) }, x)).sort((p, q) => q.per - p.per);
+      const totalMin = onIt.reduce((p, x) => p + x.min, 0) || 1;
+      const detail = '<table class="mini wide"><tr class="hd"><td>On the ' + low + '</td><td class="num">Sold</td><td class="num">Minutes each</td><td class="num">Share of station time</td><td class="num">Keeps</td><td class="num">Earns per station-minute</td></tr>' +
+        onIt.map((x) => '<tr><td>' + x.it.name + (RS.playFor(cfg, x.it.id) ? ' <em>' + ({ push: 'pushed', slow: 'wait warned', special: 'special', discount: '20% off', bogo: '1+1' }[RS.playFor(cfg, x.it.id).type]) + '</em>' : '') + '</td><td class="num">' + x.qty + '</td><td class="num">' + x.it.cookMin + '</td><td class="num">' + Math.round(x.min / totalMin * 100) + '%</td><td class="num">' + RS.money(x.cm) + '</td><td class="num">$' + x.per.toFixed(2) + '</td></tr>').join('') + '</table>';
+      const best = onIt.slice(0, Math.min(2, Math.max(1, onIt.length - 2))), worst = onIt.slice(-Math.min(2, Math.max(0, onIt.length - best.length)));
+      const building = (game.projects || []).find((p) => p.station === name && !p.done), expanded = (game.projects || []).some((p) => p.station === name && p.done), cost = RS.STATION_COST[name];
+      const actions = [];
+      if (onIt.length >= 3) actions.push({ label: 'Tonight\'s fix: push ' + best.map((x) => x.it.name).join(' and ') + ', warn guests about the wait on ' + worst.map((x) => x.it.name).join(' and '),
+        apply: (c) => { const ids = best.concat(worst).map((x) => x.it.id); c.plays = c.plays.filter((p) => !ids.includes(p.itemId)); best.forEach((x) => c.plays.push({ type: 'push', itemId: x.it.id })); worst.forEach((x) => c.plays.push({ type: 'slow', itemId: x.it.id })); } });
+      if (!building && !expanded) actions.push({ label: 'Lasting fix: expand the ' + low + ' for ' + RS.money(cost) + ', ready in ' + RS.BUILD_NIGHTS + ' nights', apply: (c, g) => RS.startExpansion(g, name) });
+      add({ tag: 'Kitchen', value: r.lateTickets * 5 + 40, title: lab + ' was the bottleneck', detail, actions,
+        body: 'Orders queued ' + Math.round(stWait[1]) + ' plate-minutes waiting for space on the ' + low + ', which holds ' + r.stationCap[name] + ' at a time. ' + r.lateTickets + ' of ' + r.tickets + ' tickets ran late. The table shows what was using it. ' +
+          (onIt.length >= 3 ? 'The quick fix costs nothing: have servers steer guests to the dishes that earn most for the time they take, and tell them honestly that the slow ones will be a while. Fewer people order those, and the ones who do mind the wait less. ' : '') +
+          (building ? 'The expansion you ordered is ' + (building.ready - game.day - 1) + ' nights from done.' : expanded ? 'You have already expanded this station once and there is no room for more, so the answer now is the menu.' : 'The lasting fix is two more places on the station: ' + RS.money(cost) + ' of building work, and it takes ' + RS.BUILD_NIGHTS + ' nights before it helps. You can do either or both.') });
     }
 
     // 4. Guests lost at the door.
@@ -78,9 +89,31 @@
       action: { label: 'Add an 8-top', apply: (c) => { c.tables[8] = (c.tables[8] || 0) + 1; c.manualLayout = null; } } });
 
     // Tables that did not match the parties.
-    if (r.joins >= 3) add({ tag: 'Tables', value: r.joins * 6 + (r.walkEmpty || 0) * r.avgCheck * 0.3, title: 'Staff pushed tables together ' + r.joins + ' times',
-      body: 'Groups kept arriving that no single table could take, so the floor team joined small tables for them. It works, but each join costs a couple of minutes at the door and strands odd chairs.' + (r.idleSmallMin > 60 ? ' Two-tops sat empty for ' + Math.round(r.idleSmallMin) + ' table-minutes while groups of three or more waited.' : '') + ' The room wants fewer two-tops and more fours.',
-      action: (cfg.tables[2] || 0) >= 4 ? { label: 'Trade four 2-tops for two 4-tops', apply: (c) => { c.tables[2] -= 4; c.tables[4] = (c.tables[4] || 0) + 2; c.manualLayout = null; } } : null });
+    {
+      // Look at the last two weeks night by night: which nights needed tables joined, which nights needed every two-top.
+      const twos = cfg.tables[2] || 0, pj = cfg.preJoin, dayStat = {};
+      game.history.concat([r]).slice(-14).forEach((n) => { const d = dayStat[n.dow] = dayStat[n.dow] || { n: 0, joins: 0, small: 0, by: {} }; d.n++; d.joins += n.joins || 0; d.small += n.smallParties || 0; Object.entries(n.joinBy || {}).forEach(([k, v]) => { d.by[k] = (d.by[k] || 0) + v; }); });
+      const joinDays = [], keepDays = [], who = {};
+      Object.keys(dayStat).map(Number).sort().forEach((dw) => {
+        const d = dayStat[dw], turn = twos ? d.small / d.n / twos : 9;
+        if (turn >= 1.5) keepDays.push(dw);
+        else if (d.joins / d.n >= 2 && !(pj.days[dw] && pj.pairs > 0)) { joinDays.push(dw); Object.entries(d.by).forEach(([k, v]) => { who[k] = (who[k] || 0) + v; }); }
+      });
+      const names = (l) => l.map((d) => RS.DAYS[d]).join(', ').replace(/, ([^,]*)$/, ' and $1');
+      if (joinDays.length && twos >= 4) {
+        const avgJ = joinDays.reduce((p, d) => p + dayStat[d].joins / dayStat[d].n, 0) / joinDays.length, k = RS.clamp(Math.round(avgJ / 2), 1, Math.floor(twos / 2) - 1);
+        const top = Object.entries(who).sort((p, q) => q[1] - p[1])[0], crowd = top ? (RS.DEMOS.find((x) => x.id === top[0]) || {}).label.toLowerCase() : 'larger';
+        const actions = [{ label: 'Set ' + k + (k === 1 ? ' pair' : ' pairs') + ' of two-tops as fours on ' + names(joinDays), apply: (c) => { c.preJoin.pairs = Math.max(c.preJoin.pairs, k); joinDays.forEach((d) => { c.preJoin.days[d] = true; }); } }];
+        if (!keepDays.length && Object.keys(dayStat).length >= 5 && joinDays.length >= 5) actions.push({ label: 'Combine them every night', apply: (c) => { c.preJoin.pairs = Math.max(c.preJoin.pairs, k); c.preJoin.days = c.preJoin.days.map(() => true); } });
+        add({ tag: 'Tables', value: avgJ * 8 + (r.walkEmpty || 0) * r.avgCheck * 0.3, title: 'Set the room differently by the night', actions,
+          body: 'On ' + names(joinDays) + ' staff pushed tables together about ' + avgJ.toFixed(0) + ' times a night, mostly for ' + crowd + ' parties, while two-tops sat idle. ' +
+            (keepDays.length ? 'On ' + names(keepDays) + ' it is the other way round: couples filled every two-top more than once, so those nights the small tables should stay apart. ' : 'I have not yet seen a night where couples needed every two-top. When one shows up I will tell you to keep those nights as they are. ') +
+            'Setting the fours before doors open saves the scramble at the host stand. The change shows on the floor plan from the next night it applies, and you can edit it on the Room step.' });
+      }
+      // The plan is in place tonight but the couples came anyway.
+      if (pj.pairs > 0 && pj.days[r.dow] && twos && (r.smallParties || 0) / twos >= 1.5 && r.walkouts > 0) add({ tag: 'Tables', value: r.walkouts * r.avgCheck * 0.3, title: RS.DAYS[r.dow] + ' needs its two-tops back', body: (r.smallParties || 0) + ' parties of one or two came for ' + twos + ' two-tops, ' + r.preJoined + ' pairs of which were set as fours, and ' + r.walkouts + ' guests gave up waiting. Keep the small tables apart on ' + RS.DAYS[r.dow] + 's.',
+        actions: [{ label: 'Keep two-tops apart on ' + RS.DAYS[r.dow] + 's', apply: (c) => { c.preJoin.days[r.dow] = false; } }] });
+    }
     if (r.walkEmpty > 0) add({ tag: 'Tables', value: r.walkEmpty * r.avgCheck * 0.6, title: r.walkEmpty + ' guests left while tables sat empty',
       body: 'They gave up waiting with free tables in the room, because the free ones were the wrong size for them, too far apart to join, or the host could not get to them in time. That is about ' + RS.money(r.walkEmpty * r.avgCheck) + ' walking out past empty chairs. Keeping small tables in pairs, close enough to push together, lets the floor absorb a group of four or five.' });
 
@@ -179,6 +212,8 @@
     if (r.primeCost && r.primeCost < 0.6) good.push('Prime cost (food plus labor) held at ' + RS.pct(r.primeCost) + '. Under 60 is where full-service rooms make money.');
     Object.keys(cfg.locks).filter((k) => cfg.locks[k]).length && good.push('Every recommendation here leaves your non-negotiables alone.');
 
+    (game.projects || []).forEach((p) => { if (!p.done && p.ready === game.day + 1) good.push('The ' + RS.STATION_LABEL[p.station].toLowerCase() + ' expansion is finished. Two more places on that station from tomorrow.'); });
+    out.forEach((n) => { n.actions = (n.actions || (n.action ? [n.action] : [])).filter(Boolean); });
     out.sort((a, b) => b.value - a.value);
     const n = cfg.owner.detail < 35 ? 3 : (cfg.owner.detail < 70 ? 6 : 99);
     return { notes: out.slice(0, n), hidden: Math.max(0, out.length - n), good, rows };

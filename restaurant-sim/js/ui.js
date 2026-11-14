@@ -118,6 +118,7 @@
         '<h3>Bar</h3><div class="grid2">' + select('room.bar.on', 'Bar', [[true, 'Yes'], [false, 'No bar']]) + (c.room.bar.on ? select('room.bar.vibe', 'What kind', [['cocktail', 'Cocktail bar'], ['wine', 'Wine bar'], ['beer', 'Neighborhood taps']]) +
           select('room.bar.wall', 'Along', walls) + slider('room.bar.pos', 'Position', '', '', { max: 1, step: 0.05 }) + stepper('room.bar.seats', 'Stools', { min: 4, max: 16 }) : '') + '</div>' +
         '<h3>Tables</h3><div class="grid4">' + [2, 4, 6, 8].map((n) => stepper('tables.' + n, n + '-tops', { max: 30 })).join('') + '</div>' +
+        '<h3>Set by the night</h3><p class="hint">Push pairs of two-tops together into fours before doors open, on the nights that bring groups. Leave them apart on date nights.</p><div class="grid2">' + stepper('preJoin.pairs', 'Pairs to combine', { max: Math.floor((c.tables[2] || 0) / 2) }) + '<div class="sel"><label>On these nights</label><div class="btnrow days">' + RS.DAYS.map((d, i) => '<button class="ghost' + (c.preJoin.days[i] ? ' on' : '') + '" data-act="pjday" data-d="' + i + '">' + d.slice(0, 2) + '</button>').join('') + '</div></div></div>' +
         '</div><div><div class="canvas-wrap edit"><canvas id="plan"></canvas></div><p class="hint" id="fit"></p><button class="ghost" data-act="auto">Arrange automatically</button></div></div>';
     },
     () => {
@@ -147,7 +148,7 @@
           return '<tr class="' + (on || (pl && pl.type === 'special') ? '' : 'off') + '" title="' + esc(i.note || '') + '"><td><input type="checkbox" data-item="' + i.id + '"' + (on ? ' checked' : '') + '></td><td><b>' + esc(i.name) + '</b><small>' + esc(i.note || '') + '</small></td>' +
             '<td class="num">' + RS.money(price) + '</td><td class="num">' + RS.money(cost) + '</td><td class="num ' + (m > 0.72 ? 'good' : (m < 0.62 ? 'bad' : '')) + '">' + Math.round(m * 100) + '%</td>' +
             '<td><span class="chip ' + i.prep + '">' + { batch: 'made ahead', assembly: 'quick finish', alacarte: 'cooked to order' }[i.prep] + '</span></td><td class="muted">' + (i.course === 'drink' ? 'bar' : RS.STATION_LABEL[i.station].split(' ')[0].toLowerCase()) + '</td>' +
-            '<td><select data-play="' + i.id + '"><option value="">no play</option>' + [['push', 'Push it'], ['discount', '20% off'], ['bogo', '1 + 1'], ['special', 'Tonight\'s special']].map((o) => '<option value="' + o[0] + '"' + (pl && pl.type === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></td></tr>';
+            '<td><select data-play="' + i.id + '"><option value="">no play</option>' + [['push', 'Push it'], ['slow', 'Warn about the wait'], ['discount', '20% off'], ['bogo', '1 + 1'], ['special', 'Tonight\'s special']].map((o) => '<option value="' + o[0] + '"' + (pl && pl.type === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select></td></tr>';
         }).join('') + '</tbody>';
       };
       return '<h2>The menu</h2><p class="lede">In a real engagement the chef writes this. Here, pick from a list. Watch the inventory count: every new ingredient is something to order, store and throw away.</p>' +
@@ -185,10 +186,10 @@
   const ownerPts = () => { const el = $('#pts'), o = cfg().owner; if (el) el.textContent = (RS.OWNER_POINTS - o.cooking - o.business - o.vibe) + ' left.'; };
   const drawPlan = () => {
     const cv = $('#plan'); if (!cv) return;
-    layout = RS.layoutTables(cfg());
+    layout = RS.layoutTables(cfg(), game.day % 7);
     RS.draw(cv, cfg(), layout, null, null);
     const seats = layout.tables.reduce((s, t) => s + t.seats, 0);
-    $('#fit').innerHTML = layout.missing ? '<span class="bad">' + layout.missing + ' tables do not fit. Widen the room, tighten the spacing, or cut tables.</span>' : seats + ' seats in ' + (cfg().room.w * cfg().room.h) + ' m², ' + (cfg().room.w * cfg().room.h / Math.max(1, seats)).toFixed(1) + ' m² a seat.';
+    $('#fit').innerHTML = layout.missing ? '<span class="bad">' + layout.missing + ' tables do not fit. Widen the room, tighten the spacing, or cut tables.</span>' : seats + ' seats in ' + (cfg().room.w * cfg().room.h) + ' m², ' + (cfg().room.w * cfg().room.h / Math.max(1, seats)).toFixed(1) + ' m² a seat.' + (cfg().preJoin.pairs > 0 ? ' Showing the room as set for ' + RS.DAYS[game.day % 7] + '.' : '') + (cfg().manualLayout ? ' Your own arrangement is saved.' : '');
   };
 
   /* ---------- service ---------- */
@@ -241,7 +242,7 @@
   };
   const tallyHTML = () => {
     const c = cfg(), rows = RS.activeItems(c).map((i) => ({ i, s: sim.stats.items[i.id] }));
-    const sec = (course, label) => '<tr class="grp"><td colspan="3">' + label + '</td></tr>' + rows.filter((r) => r.i.course === course).sort((a, b) => b.s.qty - a.s.qty).map((r) => '<tr><td class="num"><b>' + r.s.qty + '</b></td><td>' + esc(r.i.name) + (RS.playFor(c, r.i.id) ? ' <em>' + { push: 'push', discount: '20% off', bogo: '1+1', special: 'special' }[RS.playFor(c, r.i.id).type] + '</em>' : '') + '</td><td class="num">' + RS.money(r.s.rev) + '</td></tr>').join('');
+    const sec = (course, label) => '<tr class="grp"><td colspan="3">' + label + '</td></tr>' + rows.filter((r) => r.i.course === course).sort((a, b) => b.s.qty - a.s.qty).map((r) => '<tr><td class="num"><b>' + r.s.qty + '</b></td><td>' + esc(r.i.name) + (RS.playFor(c, r.i.id) ? ' <em>' + { push: 'push', slow: 'wait warned', discount: '20% off', bogo: '1+1', special: 'special' }[RS.playFor(c, r.i.id).type] + '</em>' : '') + '</td><td class="num">' + RS.money(r.s.rev) + '</td></tr>').join('');
     return '<table class="mini tally">' + sec('starter', 'Starters') + sec('main', 'Mains') + sec('side', 'Sides') + sec('dessert', 'Desserts') + sec('drink', 'Drinks') + '</table>';
   };
   const updateSide = () => {
@@ -275,6 +276,12 @@
     }
     const paid = g.debt - game.debtLeft, done = game.debtLeft <= 0;
     return '<div class="goal ' + (done ? 'hit' : '') + '"><b>Goal: repay ' + RS.money(g.debt) + ' in ' + g.nights + ' nights</b><span>' + RS.money(paid) + ' repaid, ' + RS.money(game.debtLeft) + ' to go. ' + (done ? 'Loan cleared.' : (left > 0 ? left + ' nights left; you need ' + RS.money(game.debtLeft / left) + ' a night.' : 'Deadline passed.')) + '</span><i><u style="width:' + RS.clamp(paid / g.debt * 100, 0, 100) + '%"></u></i></div>';
+  };
+  const worksHTML = () => {
+    const open = game.projects.filter((p) => !p.done), done = game.projects.filter((p) => p.done);
+    if (!game.projects.length) return '<div id="works"></div>';
+    return '<div class="goal" id="works"><b>Kitchen works</b><span>' + open.map((p) => RS.STATION_LABEL[p.station] + ' expansion: ' + RS.money(p.cost) + ' paid, ready in ' + Math.max(0, p.ready - game.day) + ' nights.').concat(done.map((p) => RS.STATION_LABEL[p.station] + ' expanded (+2 places).')).join(' ') +
+      ' Cash since opening, after ' + RS.money(game.capex) + ' of building work: <b class="' + (game.cash >= 0 ? 'good' : 'bad') + '">' + RS.money(game.cash) + '</b>.</span></div>';
   };
   const chartHTML = () => {
     const h = game.history.slice(-14); if (h.length < 2) return '';
@@ -324,11 +331,11 @@
     const wk = isWeek ? { rev: week.reduce((x, y) => x + y.revenue, 0), pr: week.reduce((x, y) => x + y.profit, 0), cov: week.reduce((x, y) => x + y.covers, 0) } : null;
     const rows = RS.quadrants(a.rows.filter((x) => x.it.course !== 'drink')).sort((x, y) => y.cm * y.qty - x.cm * x.qty);
     $('#app').innerHTML = '<div class="review"><header><div><h2>' + r.dayName + ' night, in the books</h2><p class="lede">Night ' + (r.day + 1) + ' at ' + esc(cfg().name) + '. ' + r.demand + ' guests came to the door, ' + r.covers + ' were fed' + (r.walkouts + r.turnedAway ? ', ' + (r.walkouts + r.turnedAway) + ' left hungry' : '') + '.</p></div>' +
-      '<div class="navrow"><button class="ghost" data-act="tweak">Adjust before next service</button><button class="primary" data-act="next">Run ' + RS.DAYS[game.day % 7] + '</button><button class="ghost" data-act="week">Run the week fast</button></div></header>' + goalHTML() +
+      '<div class="navrow"><button class="ghost" data-act="tweak">Adjust before next service</button><button class="primary" data-act="next">Run ' + RS.DAYS[game.day % 7] + '</button><button class="ghost" data-act="week">Run the week fast</button></div></header>' + goalHTML() + worksHTML() +
       (wk ? '<div class="goal"><b>The week</b><span>' + RS.money(wk.rev) + ' in sales, ' + RS.money(wk.pr) + ' profit (' + RS.pct(wk.rev ? wk.pr / wk.rev : 0) + '), ' + wk.cov + ' guests.</span></div>' : '') +
       '<div class="kpis big"><div><small>Sales</small><b>' + RS.money(r.revenue) + '</b></div><div><small>Profit</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.money(r.profit) + '</b></div><div><small>Margin</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.pct(r.margin) + '</b></div>' +
       '<div><small>Guests</small><b>' + r.covers + '</b></div><div><small>Check per guest</small><b>' + RS.money(r.avgCheck) + '</b></div><div><small>Guest mood</small><b>' + r.sat.toFixed(0) + '</b></div><div><small>Table turns</small><b>' + r.turns.toFixed(1) + '</b></div><div><small>Public rating</small><b class="' + (game.reputation >= game.reputationPrev ? 'good' : 'bad') + '">' + (game.reputation >= game.reputationPrev ? '&#9650; ' : '&#9660; ') + RS.stars(game.reputation).toFixed(1) + ' &#9733;</b></div></div>' +
-      '<div class="cols"><div><div class="panel"><h3>What to change</h3>' + (a.notes.length ? a.notes.map((n, i) => '<div class="note"><span class="tag">' + n.tag + '</span><b>' + esc(n.title) + '</b>' + (n.value > 15 ? '<em class="val">about ' + RS.money(n.value) + ' a night</em>' : '') + '<p>' + esc(n.body) + '</p>' + (n.action ? '<button class="ghost apply" data-act="apply" data-i="' + i + '">' + esc(n.action.label) + '</button>' : '') + '</div>').join('') : '<p class="muted">Nothing urgent. A clean night.</p>') +
+      '<div class="cols"><div><div class="panel"><h3>What to change</h3>' + (a.notes.length ? a.notes.map((n, i) => '<div class="note"><span class="tag">' + n.tag + '</span><b>' + esc(n.title) + '</b>' + (n.value > 15 ? '<em class="val">about ' + RS.money(n.value) + ' a night</em>' : '') + '<p>' + esc(n.body) + '</p>' + (n.detail ? '<div class="tablewrap detail">' + n.detail + '</div>' : '') + n.actions.map((ac, j) => '<button class="ghost apply" data-act="apply" data-i="' + i + '" data-j="' + j + '">' + esc(ac.label) + '</button>').join('') + '</div>').join('') : '<p class="muted">Nothing urgent. A clean night.</p>') +
       (a.hidden ? '<p class="muted">' + a.hidden + ' smaller notes held back. Raise "how much you want to see" under Experience to get them.</p>' : '') + '</div>' +
       reviewsHTML(r) + buzzHTML(r) + delightHTML(r) + happyHTML(r) + (a.good.length ? '<div class="panel"><h3>What worked</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
       '<div><div class="panel"><h3>Tonight\'s books</h3><table class="pl">' + line('Food', r.foodRev) + line('Drinks', r.bevRev) + line('Sales', r.revenue, 'tot') +
@@ -347,7 +354,7 @@
   document.addEventListener('input', (e) => {
     const el = e.target, path = el.dataset.path; if (!path || screen !== 'builder') return;
     if (el.type === 'range') { set(cfg(), path, Number(el.value));
-      if (/^owner\.(cooking|business|vibe)$/.test(path)) { const o = cfg().owner, over = o.cooking + o.business + o.vibe - RS.OWNER_POINTS; if (over > 0) { set(cfg(), path, Number(el.value) - over); el.value = get(cfg(), path); } ownerPts(); } const v = $('[data-val="' + path + '"]'); if (v && path.startsWith('room.')) v.textContent = path.endsWith('pos') ? '' : el.value + ' m'; if (v && path === 'menu.priceAdj') v.textContent = (el.value > 0 ? '+' : '') + el.value + '%'; if (path.startsWith('room.') || path.startsWith('atmosphere.')) cfg().manualLayout = null; }
+      if (/^owner\.(cooking|business|vibe)$/.test(path)) { const o = cfg().owner, over = o.cooking + o.business + o.vibe - RS.OWNER_POINTS; if (over > 0) { set(cfg(), path, Number(el.value) - over); el.value = get(cfg(), path); } ownerPts(); } const v = $('[data-val="' + path + '"]'); if (v && path.startsWith('room.')) v.textContent = path.endsWith('pos') ? '' : el.value + ' m'; if (v && path === 'menu.priceAdj') v.textContent = (el.value > 0 ? '+' : '') + el.value + '%'; if (path.startsWith('room.') || path === 'atmosphere.spacing' || path === 'atmosphere.tableSize') cfg().manualLayout = null; }
     else if (el.type === 'text') set(cfg(), path, el.value);
     else return;
     refreshLive();
@@ -357,7 +364,7 @@
     if (el.dataset.item) { cfg().menu.enabled[el.dataset.item] = el.checked; }
     else if (el.dataset.play !== undefined) { const id = el.dataset.play; cfg().plays = cfg().plays.filter((p) => p.itemId !== id); if (el.value) cfg().plays.push({ type: el.value, itemId: id, pct: 20 }); }
     else if (el.dataset.delight) { cfg().delighters[el.dataset.delight] = el.checked; }
-    else if (el.tagName === 'SELECT' && el.dataset.path) { let v = el.value; if (v === 'true') v = true; else if (v === 'false') v = false; else if (v !== '' && !isNaN(v)) v = Number(v); set(cfg(), el.dataset.path, v); cfg().manualLayout = null; }
+    else if (el.tagName === 'SELECT' && el.dataset.path) { let v = el.value; if (v === 'true') v = true; else if (v === 'false') v = false; else if (v !== '' && !isNaN(v)) v = Number(v); set(cfg(), el.dataset.path, v); if (el.dataset.path.startsWith('room.')) cfg().manualLayout = null; }
     else if (el.type === 'range' && step !== 2 && step !== 1) { /* fall through to re-render so dependent text updates */ }
     else return;
     const y = window.scrollY; renderBuilder(); window.scrollTo(0, y);
@@ -371,6 +378,7 @@
     else if (act === 'cuisine') { if (game.started) return; c.cuisine = el.dataset.id; c.menu.enabled = null; RS.ensureMenu(c); renderBuilder(); }
     else if (act === 'preset') { RS.applyPreset(c, c.cuisine); renderBuilder(); }
     else if (act === 'grade') { c.buying[el.dataset.cat] = Number(el.dataset.g); renderBuilder(); window.scrollTo(0, y); }
+    else if (act === 'pjday') { const i = Number(el.dataset.d); c.preJoin.days[i] = !c.preJoin.days[i]; renderBuilder(); window.scrollTo(0, y); }
     else if (act === 'auto') { c.manualLayout = null; drawPlan(); }
     else if (act === 'msize') { const k = el.dataset.k, cui = RS.cuisine(c); const seen = {}; cui.items.forEach((i) => { let on = k === 'all' ? true : !!i.core; if (k === 'tight' && on) { seen[i.course] = (seen[i.course] || 0) + 1; on = seen[i.course] <= { starter: 3, main: 4, side: 1, dessert: 2, drink: 5 }[i.course]; } c.menu.enabled[i.id] = on; }); renderBuilder(); window.scrollTo(0, y); }
     else if (act === 'open') startNight();
@@ -379,7 +387,7 @@
     else if (act === 'next') startNight();
     else if (act === 'week') { speed = 'week'; startNight(); }
     else if (act === 'tweak') { screen = 'builder'; step = 4; renderBuilder(); window.scrollTo(0, 0); }
-    else if (act === 'apply') { const n = lastAdvice.notes[Number(el.dataset.i)]; if (n && n.action && !n.applied) { n.action.apply(c); n.applied = true; el.textContent = 'Done for tomorrow'; el.disabled = true; el.classList.add('applied'); } }
+    else if (act === 'apply') { const n = lastAdvice.notes[Number(el.dataset.i)], ac = n && n.actions[Number(el.dataset.j || 0)]; if (ac && !ac.applied) { ac.apply(c, game); ac.applied = true; el.textContent = 'Done: ' + ac.label; el.disabled = true; el.classList.add('applied'); const w = $('#works'); if (w) w.outerHTML = worksHTML(); } }
     else if (act === 'restart') { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; game = RS.newGame(); RS.applyPreset(game.cfg, 'italian'); game.cfg.name = 'Your Restaurant'; screen = 'builder'; step = 0; sim = null; renderBuilder(); } else { el.dataset.armed = '1'; el.textContent = 'Click again to wipe this restaurant'; setTimeout(() => { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; } }, 4000); } }
   });
 

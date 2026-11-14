@@ -7,7 +7,7 @@
 
   RS.createSim = (game, seed) => {
     const cfg = game.cfg, rnd = RS.rng(seed || (game.day + 1) * 7919);
-    const L = RS.layoutTables(cfg), G = L.geom, cui = RS.cuisine(cfg);
+    const L = RS.layoutTables(cfg, game.day % 7), G = L.geom, cui = RS.cuisine(cfg);
     const A = { light: cfg.atmosphere.light / 100, noise: cfg.atmosphere.noise / 100, formality: cfg.atmosphere.formality / 100, spacing: cfg.atmosphere.spacing / 100 };
     const touch = cfg.diner.touch / 100, pace = cfg.diner.pace / 100, exp = cfg.staff.experience / 100, style = cfg.staff.style / 100;
     const alcFocus = cfg.menu.alcoholFocus / 100, priceT = cfg.priceTier / 100 + cfg.menu.priceAdj / 100, sourcing = cfg.sourcing / 100;
@@ -34,7 +34,7 @@
     const HH = RS.HH_TYPES.find((x) => x.id === (cfg.happyHour || {}).type) || RS.HH_TYPES[0], itemQ = {};
     menu.forEach((i) => { itemQ[i.id] = RS.itemBuy(cfg, i).q; });
     Object.keys(RS.STATION_CAP).forEach((s) => {
-      if (menu.some((i) => i.station === s && i.course !== 'drink' && i.prep !== 'batch')) { sim.stations[s] = { cap: Math.max(1, Math.round(RS.STATION_CAP[s] * lineMult)), active: 0, queued: 0 }; st.stationWait[s] = 0; st.stationBusy[s] = 0; }
+      if (menu.some((i) => i.station === s && i.course !== 'drink' && i.prep !== 'batch')) { sim.stations[s] = { cap: Math.max(1, Math.round(RS.STATION_CAP[s] * lineMult)) + ((game.stationBonus || {})[s] || 0), active: 0, queued: 0 }; st.stationWait[s] = 0; st.stationBusy[s] = 0; }
     });
     // The line: one cook per station first, extras double up. The first one runs the pass.
     const stNames = Object.keys(sim.stations);
@@ -115,7 +115,7 @@
     st.demandCovers = Math.round(target);
     const maxTable = Math.max(Math.max.apply(null, sim.tables.map((t) => t.seats).concat([0])), sim.tables.filter((t) => !t.bar).map((t) => t.seats).sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0) - 1);
     const arrivals = []; let planned = 0, pid = 0;
-    const demoW = (d) => RS.demoWeight(d, cfg, !!G.bar);
+    const demoW = (d) => RS.demoWeight(d, cfg, !!G.bar) * ((RS.DOW_DEMO[d.id] || [])[dow] || 1);
     while (planned < target) {
       const demo = rnd.weighted(RS.DEMOS, demoW), size = rnd.pick(demo.sizes);
       // Triangular: builds from 5, peaks around 7:30, tails off by last seating.
@@ -153,6 +153,7 @@
       const dc = RS.playFor(cfg, it.id, 'discount'); if (dc) w *= 1 + (dc.pct || 20) / 100 * 3.5;
       if (RS.playFor(cfg, it.id, 'bogo') && party.size >= 2) w *= 1.7;
       if (RS.playFor(cfg, it.id, 'special')) w *= 1.5 + 0.6 * touch;
+      if (RS.playFor(cfg, it.id, 'slow')) w *= 1 - 0.55 * (0.4 + 0.6 * touch);   // the server says it will be a while
       return w;
     };
     const addLine = (party, it, diner, free) => {
@@ -296,7 +297,8 @@
       ['light', 'noise', 'formality', 'spacing'].forEach((k) => { fit += d.likes[k] * (A[k] - 0.5) * 9; });
       fit += d.likes.touch * (touch - 0.5) * 8 - Math.abs(style - A.formality) * 8;
       const wait = 0.9 * Math.max(0, p.waits.seat - 5) + 1.6 * Math.max(0, (p.waits.greet || 0) - 3) * (0.7 + 0.6 * priceT) + 0.8 * Math.max(0, (p.waits.check || 0) - 5);
-      const kit = 1.0 * Math.max(0, (p.waits.starter || 0) - 14) + 1.0 * Math.max(0, (p.waits.main || 0) - (p.hadStarter ? 12 : 23));
+      const warned = p.lines.some((l) => RS.playFor(cfg, l.item.id, 'slow'));   // told to expect a wait, so the wait stings less
+      const kit = (1.0 * Math.max(0, (p.waits.starter || 0) - 14) + 1.0 * Math.max(0, (p.waits.main || 0) - (p.hadStarter ? 12 : 23))) * (warned ? 0.45 : 1);
       const cw = { main: 3, starter: 1.5, dessert: 1, side: 0.7, drink: 1 }; let qw = 0, qs = 0; p.lines.forEach((l) => { qw += cw[l.course]; qs += cw[l.course] * itemQ[l.item.id]; });
       const partyQ = qw ? qs / qw : 0;
       const food = (sourcing - 0.5) * 12 + partyQ * 26 - drop.quality + (OW.role === 'chef' ? (OW.cooking - 0.45) * 12 : 0);
@@ -359,7 +361,7 @@
     };
 
     const arrive = (a) => {
-      st.arrivals += a.size;
+      st.arrivals += a.size; if (!a.hh && a.size <= 2) st.smallParties = (st.smallParties || 0) + 1;
       if (a.size > maxTable + (maxTable >= 4 ? 1 : 0)) { st.turnedAway += a.size; say('Turned away a party of ' + a.size + ': no table that big', 'bad'); return; }
       const stays = a.hh && rnd() < 0.2;
       const p = { id: a.id, demo: a.demo, size: a.size, hh: !!a.hh, stays, reason: a.hh ? (stays ? 'Happy hour, then stayed for dinner' : 'Happy hour') : RS.visitReason(a.demo, game, rnd), x: G.entrance.x, y: G.entrance.y, state: 'walkin', arrivedAt: sim.t, lines: [], check: 0, drinkers: [], waits: {}, eatUntil: 0,
@@ -393,7 +395,7 @@
         if (!best && !group) continue;
         const t = best ? best.t : group.g[0], all = best ? [t] : group.g, cap = all.reduce((x, y) => x + y.seats, 0);
         all.forEach((x) => { x.state = 'taken'; x.party = p; x.turns++; });
-        if (group) { t.joined = all.slice(1); t.joined.forEach((x) => { x.joinedTo = t; }); st.joins++; say('Pushed tables ' + all.map((x) => x.id + 1).join(' and ') + ' together for a party of ' + p.size, 'info'); }
+        if (group) { t.joined = all.slice(1); t.joined.forEach((x) => { x.joinedTo = t; }); st.joins++; st.joinBy = st.joinBy || {}; st.joinBy[p.demo.id] = (st.joinBy[p.demo.id] || 0) + 1; say('Pushed tables ' + all.map((x) => x.id + 1).join(' and ') + ' together for a party of ' + p.size, 'info'); }
         p.table = t;
         p.waits.seat = sim.t - p.arrivedAt; st.seatWait.push(p.waits.seat);
         st.partiesSeated++; st.covers += p.size; st.seatsOffered += cap; st.seatsUsed += Math.min(p.size, cap);
@@ -480,7 +482,7 @@
       const diningTables = sim.tables.filter((t) => !t.bar);
       return {
         day: game.day, dow, dayName: RS.DAYS[dow], revenue: s.revenue, foodRev: s.foodRev, bevRev: s.bevRev, discounts: s.discounts,
-        cogs: s.cogs, waste, delight, delighters, hh, joins: s.joins, walkEmpty: s.walkEmpty, idleSmallMin: s.idleSmallMin, reviews: s.reviews, reviewStars: s.reviews ? s.reviewStars / s.reviews : 0, ownerSave, labor, laborTotal, occupancy, occTotal, card, profit, margin: s.revenue ? profit / s.revenue : 0,
+        cogs: s.cogs, waste, delight, delighters, hh, joins: s.joins, joinBy: s.joinBy || {}, smallParties: s.smallParties || 0, preJoined: sim.tables.filter((t) => t.merged).length, walkEmpty: s.walkEmpty, idleSmallMin: s.idleSmallMin, reviews: s.reviews, reviewStars: s.reviews ? s.reviewStars / s.reviews : 0, ownerSave, labor, laborTotal, occupancy, occTotal, card, profit, margin: s.revenue ? profit / s.revenue : 0,
         primeCost: s.revenue ? (s.cogs + waste + laborTotal) / s.revenue : 0, foodCostPct: s.revenue ? (s.cogs + waste) / s.revenue : 0, laborPct: s.revenue ? laborTotal / s.revenue : 0,
         covers: s.covers, parties: s.partiesSeated, demand: s.arrivals, walkouts: s.walkouts, turnedAway: s.turnedAway,
         avgCheck: s.covers ? s.revenue / s.covers : 0, tips: s.tips,

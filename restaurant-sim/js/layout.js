@@ -49,7 +49,7 @@
   const overlap = (a, b, pad) => a.x < b.x + b.w + pad && a.x + a.w + pad > b.x && a.y < b.y + b.h + pad && a.y + a.h + pad > b.y;
 
   /* Shelf-pack tables row by row. Spacing slider sets the aisle between them. Returns placed tables and how many did not fit. */
-  RS.layoutTables = (cfg) => {
+  RS.layoutTables = (cfg, dow) => {
     const room = cfg.room, g = RS.geom(cfg), a = cfg.atmosphere;
     const scale = RS.lerp(0.88, 1.25, a.tableSize / 100);
     const gap = RS.lerp(1.0, 2.3, a.spacing / 100);   // includes chairs
@@ -99,6 +99,18 @@
       for (let i = 0; i + 1 < g.bar.stools.length; i += 2) {
         const s1 = g.bar.stools[i], s2 = g.bar.stools[i + 1];
         placed.push({ id: placed.length, seats: 2, bar: true, stools: [s1, s2], cx: (s1.x + s2.x) / 2, cy: (s1.y + s2.y) / 2, x: s1.x, y: s1.y, w: 0, h: 0 });
+      }
+    }
+    // Two-tops pushed together into fours before doors open, on the nights the plan says so.
+    const pj = cfg.preJoin;
+    if (dow != null && pj && pj.pairs > 0 && pj.days[dow]) {
+      for (let k = 0; k < pj.pairs; k++) {
+        const l = placed.filter((t) => !t.bar && t.seats === 2 && !t.merged); let best = null;
+        for (let i = 0; i < l.length; i++) for (let j = i + 1; j < l.length; j++) { const d = Math.hypot(l[i].cx - l[j].cx, l[i].cy - l[j].cy) + Math.abs(l[i].cy - l[j].cy) * 2; if (d < 5 && (!best || d < best.d)) best = { a: l[i], b: l[j], d }; }
+        if (!best) break;
+        const a = best.a, b = best.b, cx = (a.cx + b.cx) / 2, cy = (a.cy + b.cy) / 2;
+        a.w += b.w; a.x = RS.clamp(cx - a.w / 2, 0.2, room.w - a.w - 0.2); a.y = cy - a.h / 2; a.cx = a.x + a.w / 2; a.cy = cy; a.seats = 4; a.merged = true;
+        placed.splice(placed.indexOf(b), 1);
       }
     }
     return { tables: placed, missing, geom: g };

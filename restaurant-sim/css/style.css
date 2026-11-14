@@ -119,6 +119,7 @@ table.pl td { padding: 5px 4px; } table.pl tr.tot td { border-top: 1px solid var
 .val { float: right; font-style: normal; color: var(--good); font-size: 13px; }
 table.mini.wide { width: 100%; } table.mini tr.hd td { color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); } table.mini.wide td { padding: 5px 6px; }
 table.buy td { vertical-align: middle; } .btnrow .ghost { padding: 5px 10px; font-size: 13px; white-space: nowrap; } .btnrow .ghost.on { background: var(--brass); color: #1b1610; border-color: var(--brass); font-weight: 600; }
+.tablewrap.detail { margin: 6px 0 10px; } .note .apply { margin: 0 8px 8px 0; text-align: left; } .btnrow.days .ghost { padding: 5px 8px; }
 .quote { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; margin: 8px 0; font-family: var(--serif); font-size: 16px; color: var(--ink) !important; } .quote.bad { border-color: var(--bad); } .quote.good { border-color: var(--good); }
 .good-list { margin: 0; padding-left: 18px; } .good-list li { margin-bottom: 6px; }
 .goal { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--brass); border-radius: 8px; padding: 12px 16px; margin: 10px 0; display: grid; gap: 4px; }

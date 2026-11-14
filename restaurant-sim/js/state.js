@@ -181,6 +181,7 @@ RS.defaultConfig = () => ({
   menu: { enabled: null, alcoholFocus: 55, priceAdj: 0, portion: 50 },
   buying: { protein: 0, seafood: 0, dairy: 0, produce: 0, pantry: 0, bar: 0 },   // -1 budget, 0 house standard, 1 premium
   happyHour: { type: 'none' },
+  preJoin: { pairs: 0, days: [false, false, false, false, false, false, false] },   // two-tops set as fours before service, by night
   plays: [],              // {type:'push'|'discount'|'bogo'|'special', itemId, pct}
   delighters: {},
   goal: { type: 'margin', target: 12, nights: 14, debt: 20000 }
@@ -300,7 +301,21 @@ RS.suggestStaff = (cfg) => {
 };
 
 /* Goal + money carried across nights. */
-RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false, expect: null });
+RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false, expect: null, projects: [], stationBonus: {}, capex: 0 });
+
+/* Building work on the line: money up front, two weeks of contractors, then more room on one station. */
+RS.STATION_COST = { grill: 22000, saute: 18000, fry: 14000, oven: 20000, cold: 9000, pastry: 10000, sushi: 16000 };
+RS.BUILD_NIGHTS = 14;
+RS.startExpansion = (game, station) => {
+  const cost = RS.STATION_COST[station];
+  game.projects.push({ station, cost, ready: game.day + RS.BUILD_NIGHTS, done: false });
+  game.cash -= cost; game.capex += cost; if (game.cfg.goal.type === 'debt') game.debtLeft += cost;
+};
+/* Who goes out on which night. Multiplies the pull of the concept and the room. */
+RS.DOW_DEMO = {
+  date: [0.7, 0.7, 0.8, 1.2, 1.4, 1.4, 0.8], family: [1.25, 1.2, 1.1, 0.9, 0.8, 1.0, 1.5], business: [1.1, 1.3, 1.3, 1.2, 0.7, 0.4, 0.4],
+  friends: [0.7, 0.8, 0.9, 1.1, 1.4, 1.4, 0.8], celebration: [0.7, 0.7, 0.8, 1.0, 1.4, 1.5, 1.1]
+};
 
 /* The public rating guests see online. It follows reputation, which follows how people felt when they left. */
 RS.stars = (rep) => RS.clamp(2.4 + 2.5 * rep, 1, 5);
@@ -312,4 +327,5 @@ RS.closeNight = (game, r) => {
   const now = RS.expectNow(game.cfg), e = game.expect || now;
   game.expect = {}; Object.keys(now).forEach((k) => { game.expect[k] = e[k] + (now[k] - e[k]) * 0.12; });
   game.day++;
+  game.projects.forEach((p) => { if (!p.done && game.day >= p.ready) { p.done = true; game.stationBonus[p.station] = (game.stationBonus[p.station] || 0) + 2; } });
 };
