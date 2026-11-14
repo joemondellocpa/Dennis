@@ -62,6 +62,17 @@
       (game.started ? '<p class="muted">Night ' + (game.day + 1) + ', ' + RS.DAYS[game.day % 7] + '. Greyed-out settings are construction decisions and stay as built.</p>' : '<p class="muted">Lock anything the owner will not trade away. The advice after each service works around those.</p>');
   };
 
+  /* ---------- the rating, always on screen ---------- */
+  const topBar = () => {
+    const el = $('#rep'); if (!el) return;
+    const h = game.history, now = RS.stars(game.reputation), full = Math.round(now);
+    const stars = '<span class="stars">' + '&#9733;'.repeat(full) + '<i>' + '&#9733;'.repeat(5 - full) + '</i></span>';
+    const delta = (from, label) => { const d = now - from; return Math.abs(d) < 0.05 ? '<span class="muted">steady ' + label + '</span>' : '<span class="' + (d > 0 ? 'good' : 'bad') + '">' + (d > 0 ? '&#9650; +' : '&#9660; ') + d.toFixed(1) + ' ' + label + '</span>'; };
+    let trend = '<span class="muted">no reviews yet</span>';
+    if (h.length) trend = delta(RS.stars(game.reputationPrev), 'last night') + (h.length >= 7 ? ' &middot; ' + delta(h.length > 7 ? h[h.length - 8].starsNext : RS.stars(0.5), 'this week') : '');
+    el.innerHTML = '<b>' + now.toFixed(1) + '</b>' + stars + '<small>public rating<br>' + trend + '</small>';
+  };
+
   /* ---------- builder steps ---------- */
   const crowd = () => {
     const a = cfg().atmosphere, A = { light: a.light / 100, noise: a.noise / 100, formality: a.formality / 100, spacing: a.spacing / 100 };
@@ -159,7 +170,7 @@
       '<section class="main">' + stepHTML[step]() + '<div class="navrow">' + (step > 0 ? '<button class="ghost" data-act="goto" data-i="' + (step - 1) + '">Back</button>' : '<span></span>') + (step < STEPS.length - 1 ? '<button class="primary" data-act="goto" data-i="' + (step + 1) + '">Next: ' + STEPS[step + 1] + '</button>' : '') + '</div></section>' +
       '<aside class="aside" id="aside">' + aside() + '</aside></div>';
     if (step === 2) drawPlan();
-    ownerPts();
+    ownerPts(); topBar();
   };
   const ownerPts = () => { const el = $('#pts'), o = cfg().owner; if (el) el.textContent = (RS.OWNER_POINTS - o.cooking - o.business - o.vibe) + ' left.'; };
   const drawPlan = () => {
@@ -183,7 +194,7 @@
       RS.DEMOS.map((d) => '<span><i class="dot" style="background:' + d.color + '"></i>' + d.label + '</span>').join('') +
       '<span><i class="sq" style="background:#d98b3a"></i>waiting</span><span><i class="sq" style="background:#5fae6e"></i>eating</span><span><i class="sq" style="background:#7b9bd1"></i>finishing</span><span><i class="sq" style="background:#6b5b4d"></i>needs bussing</span></div></div>' +
       '<aside class="side"><div id="hud"></div><div class="tabs">' + [['tables', 'Who is this?'], ['menu', 'Menu tally'], ['log', 'Floor notes']].map((t) => '<button data-act="tab" data-t="' + t[0] + '" class="' + (tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div><div id="tabbody"></div></aside></div>';
-    updateSide();
+    updateSide(); topBar();
   };
   const tableHTML = () => {
     if (selStaff) return staffHTML(selStaff);
@@ -225,7 +236,7 @@
     if (!sim || screen !== 'service') return;
     const s = sim.stats, waiting = sim.parties.filter((p) => p.state === 'waiting').reduce((a, p) => a + p.size, 0), seated = sim.parties.filter((p) => p.table && p.state !== 'leaving').reduce((a, p) => a + p.size, 0);
     const sat = s.sats.length ? s.sats.reduce((a, b) => a + b, 0) / s.sats.length : 0;
-    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + '<br>' + RS.stars(game.reputation).toFixed(1) + ' &#9733; public rating</span><b>' + RS.clock(sim.t) + '</b></div>' +
+    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + </span><b>' + RS.clock(sim.t) + '</b></div>' +
       '<div class="speed">' + [['pause', '&#10074;&#10074;', 'Pause'], ['normal', '&gt;', 'One dinner in about 5 minutes'], ['fast', '&gt;&gt;', 'One dinner in about 3 minutes'], ['week', '&gt;&gt;&gt;', 'A whole week in about a minute, night after night']].map((x) => '<button title="' + x[2] + '" data-act="speed" data-s="' + x[0] + '" class="' + ((x[0] === 'pause' ? paused : (!paused && speed === x[0])) ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>' +
       '<div class="kpis"><div><small>Sales</small><b>' + RS.money(s.revenue) + '</b></div><div><small>Guests served</small><b>' + s.covers + '</b></div><div><small>In the room</small><b>' + seated + ' / ' + RS.seatCount(cfg()) + '</b></div>' +
       '<div><small>Waiting at door</small><b class="' + (waiting > 6 ? 'bad' : '') + '">' + waiting + '</b></div><div><small>Walked out</small><b class="' + (s.walkouts ? 'bad' : '') + '">' + (s.walkouts + s.turnedAway) + '</b></div><div><small>Mood so far</small><b>' + (sat ? sat.toFixed(0) : '&ndash;') + '</b></div></div>';
@@ -236,7 +247,7 @@
     const r = sim.results(); lastResults = r;
     lastAdvice = RS.advise(game, r);
     const weekEnd = game.day % 7 === 6;
-    RS.closeNight(game, r);
+    RS.closeNight(game, r); topBar();
     if (speed === 'week' && !weekEnd) { sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 }; selTable = null; selStaff = null; return; }
     if (speed === 'week') speed = 'normal';
     sim = null; screen = 'review'; renderReview();
@@ -291,7 +302,7 @@
         '<h4>Who came</h4>' + RS.DEMOS.filter((d) => r.demos[d.id]).sort((x, y) => r.demos[y.id] - r.demos[x.id]).map((d) => '<div class="bar"><span>' + d.label + '</span><i><b style="width:' + (r.demos[d.id] / r.demand * 100 / 0.5).toFixed(0) + '%;background:' + d.color + '"></b></i><em>' + r.demos[d.id] + '</em></div>').join('') + '</div>' : '') + '</div></div>' +
       (full ? '<div class="panel"><h3>The menu, plate by plate</h3><p class="hint">Stars sell and earn. Workhorses sell but earn little. Puzzles earn but do not sell. Dogs do neither.</p><div class="tablewrap"><table class="menu"><thead><tr><th>Item</th><th class="num">Sold</th><th class="num">Price</th><th class="num">Keeps</th><th class="num">Contribution</th><th></th></tr></thead><tbody>' +
         rows.map((x) => '<tr><td><b>' + esc(x.it.name) + '</b> <span class="muted">' + x.it.course + '</span></td><td class="num">' + x.qty + '</td><td class="num">' + RS.money(x.price) + '</td><td class="num">' + RS.money(x.cm) + '</td><td class="num">' + RS.money(x.cm * x.qty) + '</td><td><span class="chip q-' + x.quad.toLowerCase() + '">' + x.quad + '</span></td></tr>').join('') + '</tbody></table></div></div>' : '') + '</div>';
-    window.scrollTo(0, 0);
+    window.scrollTo(0, 0); topBar();
   };
 
   /* ---------- events ---------- */

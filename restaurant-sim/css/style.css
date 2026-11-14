@@ -23,6 +23,10 @@ button { font: inherit; color: inherit; cursor: pointer; border-radius: 6px; }
 .ghost.applied { color: var(--good); border-color: var(--good); cursor: default; }
 
 .top { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+.top { position: sticky; top: 0; z-index: 5; background: var(--bg); gap: 16px; }
+.rep { margin-left: auto; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.rep b { font: 400 26px var(--serif); color: var(--brass); } .rep .stars { color: var(--brass); letter-spacing: 1px; } .rep .stars i { font-style: normal; color: var(--line); }
+.rep small { font-size: 11px; line-height: 1.25; color: var(--muted); }
 .brand b { font: 400 24px var(--serif); color: var(--brass); margin-right: 14px; }
 .brand span { color: var(--muted); }
 
