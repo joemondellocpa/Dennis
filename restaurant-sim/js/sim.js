@@ -14,6 +14,10 @@
     const quality = A.formality * 0.3 + sourcing * 0.35 + exp * 0.35;
     const overprice = Math.max(0, priceT - quality - 0.12);
     const dow = game.day % 7, OW = RS.ownerEff(cfg);
+    const portion = cfg.menu.portion / 100, nowX = RS.expectNow(cfg), EX = game.expect || nowX;
+    // Cuts below what regulars are used to. Fades as expectations drift down to the new normal.
+    const drop = { quality: Math.max(0, EX.sourcing - nowX.sourcing) * 0.14, portion: Math.max(0, EX.portion - nowX.portion) * 0.14, price: Math.max(0, nowX.priceAdj - EX.priceAdj) * 0.45, delight: Math.max(0, EX.delight - nowX.delight) * 2.5 };
+    const G_ = { wait: 0, kitchen: 0, price: 0, quality: 0, portion: 0, room: 0, extras: 0 }, P_ = { food: 0, service: 0, room: 0, extras: 0, portion: 0 };
     const D = cfg.delighters || {};
     const menu = RS.activeItems(cfg);
     const byCourse = (c) => menu.filter((i) => i.course === c);
@@ -104,7 +108,7 @@
     const seats = RS.seatCount(cfg);
     const deals = cfg.plays.filter((p) => p.type === 'discount' || p.type === 'bogo').length;
     const valueMult = 1 - 0.6 * overprice + 0.15 * Math.max(0, quality - priceT - 0.1);
-    const target = (72 + 0.85 * seats) * RS.DOW_DEMAND[dow] * (0.55 + 0.9 * game.reputation) * valueMult * (1 + 0.03 * deals) * (1 + 0.08 * OW.biz) * rnd.range(0.92, 1.08);
+    const target = (72 + 0.85 * seats) * RS.DOW_DEMAND[dow] * (0.55 + 0.9 * game.reputation) * valueMult * (1 + 0.03 * deals) * (1 + 0.08 * OW.biz) * RS.lerp(1.08, 0.76, cfg.priceTier / 100) * rnd.range(0.92, 1.08);
     st.demandCovers = Math.round(target);
     const maxTable = Math.max.apply(null, sim.tables.map((t) => t.seats).concat([0]));
     const arrivals = []; let planned = 0, pid = 0;
@@ -265,25 +269,25 @@
       else if (p.state === 'paying' && sim.t >= p.leaveAt) leave(p);
     };
     const satisfaction = (p) => {
-      const d = p.demo; let s = 76;
-      ['light', 'noise', 'formality', 'spacing'].forEach((k) => { s += d.likes[k] * (A[k] - 0.5) * 9; });
-      s += d.likes.touch * (touch - 0.5) * 8;
-      s -= 0.9 * Math.max(0, p.waits.seat - 5);
-      s -= 1.6 * Math.max(0, (p.waits.greet || 0) - 3) * (0.7 + 0.6 * priceT);
-      s -= 1.0 * Math.max(0, (p.waits.starter || 0) - 14);
-      s -= 1.0 * Math.max(0, (p.waits.main || 0) - (p.hadStarter ? 12 : 23));
-      s -= 0.8 * Math.max(0, (p.waits.check || 0) - 5);
-      s += (exp - 0.5) * 8 + (sourcing - 0.5) * 5;
-      s -= overprice * 28;
-      s -= Math.abs(style - A.formality) * 8;
+      const d = p.demo; let s = 76, fit = 0;
+      ['light', 'noise', 'formality', 'spacing'].forEach((k) => { fit += d.likes[k] * (A[k] - 0.5) * 9; });
+      fit += d.likes.touch * (touch - 0.5) * 8 - Math.abs(style - A.formality) * 8;
+      const wait = 0.9 * Math.max(0, p.waits.seat - 5) + 1.6 * Math.max(0, (p.waits.greet || 0) - 3) * (0.7 + 0.6 * priceT) + 0.8 * Math.max(0, (p.waits.check || 0) - 5);
+      const kit = 1.0 * Math.max(0, (p.waits.starter || 0) - 14) + 1.0 * Math.max(0, (p.waits.main || 0) - (p.hadStarter ? 12 : 23));
+      const food = (sourcing - 0.5) * 12 - drop.quality + (OW.role === 'chef' ? (OW.cooking - 0.45) * 12 : 0);
+      const port = (portion - 0.5) * 10 - drop.portion;
+      const price = overprice * 28 + drop.price + Math.max(0, 0.5 - portion) * priceT * 8;   // small plates at big prices sting twice
+      const svc = (exp - 0.5) * 8;
+      s += fit - wait - kit + food + port - price + svc - drop.delight;
+      G_.wait += wait; G_.kitchen += kit; G_.price += price; G_.quality += Math.max(0, -food); G_.portion += Math.max(0, -port); G_.room += Math.max(0, -fit); G_.extras += drop.delight;
+      P_.food += Math.max(0, food); P_.service += Math.max(0, svc) + (p.ownerVisited ? 3 : 0); P_.room += Math.max(0, fit); P_.portion += Math.max(0, port);
       if (p.ownerVisited) s += 2 + 5 * OW.vibeRaw;
       if (OW.role === 'greeter') s += 1 + 4 * OW.vibeRaw;
-      if (OW.role === 'chef') s += (OW.cooking - 0.45) * 12;   // a chef-owner who cannot cook drags the food down
       if (OW.role === 'kitchen') s += OW.cook * 2;
       if (OW.role === 'handsoff') s -= 2;
       RS.DELIGHTERS.forEach((x) => {
         if (!D[x.id]) return;
-        s += x.sat + (x.fancyBonus || 0) * A.formality;
+        s += x.sat + (x.fancyBonus || 0) * A.formality; P_.extras += x.sat;
         if (x.regularBonus && d.id === 'solo') s += x.regularBonus;
         if (x.celebrationBonus && d.id === 'celebration') s += x.celebrationBonus;
       });
@@ -392,7 +396,7 @@
       const ownerSave = (s.cogs * 0.05 + laborTotal * 0.04) * OW.biz;
       const delight = RS.DELIGHTERS.reduce((x, d) => x + (D[d.id] ? d.perCover * s.covers : 0), 0) + s.comps;
       const occupancy = {
-        'Rent': area * RS.lerp(1.0, 3.8, cfg.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[cfg.room.line],
+        'Rent': area * RS.lerp(1.0, 5.6, cfg.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[cfg.room.line],
         'Utilities': 40 + 0.3 * area, 'Linen, glassware, supplies': s.covers * (0.5 + 1.2 * A.formality), 'Insurance, marketing, repairs, admin': 160 + s.revenue * 0.035
       };
       const occTotal = Object.values(occupancy).reduce((x, y) => x + y, 0);
@@ -413,8 +417,10 @@
         items: s.items, ingredients: ingr, stationWait: s.stationWait, stationBusy: s.stationBusy, stationCap: Object.fromEntries(Object.entries(sim.stations).map(([k, v]) => [k, v.cap])), cookWait: s.cookWait,
         serverUtil: avg(servers.map((a) => a.busy / shift)), busserUtil: avg(bussers.map((a) => a.busy / shift)),
         seatFill: s.seatsOffered ? s.seatsUsed / s.seatsOffered : 0, turns: diningTables.length ? avg(diningTables.map((t) => t.turns)) : 0,
-        demos: s.demos, seats, shift, barWaitDrinks: s.barWaitDrinks,
-        reputationNext: RS.clamp(game.reputation + ((avg(allSats) || 70) - 70) / 30 * 0.08 - (s.arrivals ? (s.walkouts + s.turnedAway) / s.arrivals : 0) * 0.04, 0.1, 1)
+        demos: s.demos, seats, shift, drop, snap: nowX, stars: RS.stars(game.reputation),
+        gripes: Object.fromEntries(Object.entries(G_).map(([k, v]) => [k, v / Math.max(1, s.sats.length)])), praise: Object.fromEntries(Object.entries(P_).map(([k, v]) => [k, v / Math.max(1, s.sats.length)])), barWaitDrinks: s.barWaitDrinks,
+        get starsNext() { return RS.stars(this.reputationNext); },
+        reputationNext: RS.clamp(game.reputation + RS.clamp(((avg(allSats) || 73) - 73) / 30 * 0.11, -0.035, 0.03) - (s.arrivals ? (s.walkouts + s.turnedAway) / s.arrivals : 0) * 0.04, 0.1, 1)
       };
     };
     return sim;

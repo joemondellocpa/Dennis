@@ -178,7 +178,7 @@ RS.defaultConfig = () => ({
   diner: { touch: 55, pace: 50 },
   staff: { style: 45, experience: 55, servers: 4, bussers: 2, hosts: 1, cooks: 4, bartenders: 1 },
   owner: { role: 'floor', cooking: 50, business: 50, vibe: 50, detail: 70 },
-  menu: { enabled: null, alcoholFocus: 55, priceAdj: 0 },
+  menu: { enabled: null, alcoholFocus: 55, priceAdj: 0, portion: 50 },
   plays: [],              // {type:'push'|'discount'|'bogo'|'special', itemId, pct}
   delighters: {},
   goal: { type: 'margin', target: 12, nights: 14, debt: 20000 }
@@ -234,7 +234,7 @@ RS.activeItems = (cfg) => {
 };
 
 RS.priceMult = (cfg) => RS.lerp(0.8, 1.5, cfg.priceTier / 100) * (1 + cfg.menu.priceAdj / 100);
-RS.costMult = (cfg) => RS.lerp(0.86, 1.34, cfg.sourcing / 100);
+RS.costMult = (cfg) => RS.lerp(0.84, 1.5, cfg.sourcing / 100) * RS.lerp(0.84, 1.16, cfg.menu.portion / 100);
 RS.playFor = (cfg, id, type) => cfg.plays.find((p) => p.itemId === id && (!type || p.type === type));
 
 RS.itemPrice = (cfg, it) => {
@@ -263,4 +263,16 @@ RS.suggestStaff = (cfg) => {
 };
 
 /* Goal + money carried across nights. */
-RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false });
+RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false, expect: null });
+
+/* The public rating guests see online. It follows reputation, which follows how people felt when they left. */
+RS.stars = (rep) => RS.clamp(2.4 + 2.5 * rep, 1, 5);
+/* What guests have come to expect from this place. It drifts slowly, so a sudden cut gets noticed. */
+RS.expectNow = (cfg) => ({ sourcing: cfg.sourcing, portion: cfg.menu.portion, priceAdj: cfg.menu.priceAdj, delight: RS.DELIGHTERS.filter((d) => cfg.delighters[d.id]).length });
+RS.closeNight = (game, r) => {
+  game.history.push(r); game.cash += r.profit; game.reputationPrev = game.reputation; game.reputation = r.reputationNext;
+  if (game.debtLeft > 0) game.debtLeft = Math.max(0, game.debtLeft - Math.max(0, r.profit));
+  const now = RS.expectNow(game.cfg), e = game.expect || now;
+  game.expect = {}; Object.keys(now).forEach((k) => { game.expect[k] = e[k] + (now[k] - e[k]) * 0.12; });
+  game.day++;
+};

@@ -110,6 +110,24 @@
     if (!cfg.delighters.memory && ((r.demos.solo || 0) + (r.demos.celebration || 0)) > r.demand * 0.18) add({ tag: 'Loyalty', value: 20, title: 'Brief the team on who is coming', body: 'Regulars and celebrations were ' + RS.pct(((r.demos.solo || 0) + (r.demos.celebration || 0)) / r.demand) + ' of tonight. Fifteen minutes before doors with the guest notes costs ' + RS.money(5.5) + ' and those tables notice.',
       action: { label: 'Add the pre-shift briefing', apply: (c) => { c.delighters.memory = true; } } });
 
+    // Greed: cuts guests can taste. The saving is real tonight; the bill comes later through the rating.
+    const snaps = game.history.map((h) => h.snap).filter(Boolean).concat([RS.expectNow(cfg)]), top = (k) => Math.max.apply(null, snaps.map((x) => x[k])), low = (k) => Math.min.apply(null, snaps.map((x) => x[k]));
+    const d = r.drop || {}, exq = { sourcing: Math.max(50, top('sourcing')), portion: Math.max(50, top('portion')), priceAdj: low('priceAdj') }, fall = RS.stars(r.reputationNext) - RS.stars(game.reputation);
+    const lost = (pts) => r.revenue * 0.9 * (pts / 30 * 0.11) * 7;   // a week of this mood, turned into lost sales per night
+    if (d.quality > 1.5) add({ tag: 'Reputation', value: lost(d.quality) + 60, title: 'Guests can taste the cheaper ingredients', body: 'Buying down saved roughly ' + RS.money(r.cogs * (exq.sourcing - cfg.sourcing) / 100 * 0.45) + ' on tonight\'s plates and cost ' + d.quality.toFixed(0) + ' points of guest mood. Mood becomes reviews, reviews become the public rating, and the rating decides how many people come next week. Keep this up for a week and it costs about ' + RS.money(lost(d.quality)) + ' a night in sales that never walk in.',
+      action: { label: 'Go back to the ingredients guests expect', apply: (c) => { c.sourcing = Math.round(exq.sourcing); } } });
+    if (d.portion > 1.5) add({ tag: 'Reputation', value: lost(d.portion) + 50, title: 'The plates got smaller and people noticed', body: 'Tighter portions trimmed plate cost and took ' + d.portion.toFixed(0) + ' points off guest mood. Regulars compare tonight with last month. The reviews that follow mention value, and that is the word that empties a room.',
+      action: { label: 'Restore the portions', apply: (c) => { c.menu.portion = Math.round(exq.portion); } } });
+    if (d.price > 1.5) add({ tag: 'Reputation', value: lost(d.price) + 40, title: 'The price rise landed badly', body: 'Prices went up faster than guests were ready for, costing ' + d.price.toFixed(0) + ' points of mood. Increases stick when they are small and the experience moves with them. Two or three percent at a time is invisible; fifteen is a review.',
+      action: { label: 'Roll back to a smaller increase', apply: (c) => { c.menu.priceAdj = Math.round(exq.priceAdj + 3); } } });
+    if (d.delight > 1.5) add({ tag: 'Reputation', value: lost(d.delight) + 30, title: 'Guests miss what you took away', body: 'Something they were used to getting is gone, and it cost ' + d.delight.toFixed(0) + ' points of mood. The small free things are the ones regulars mention first.' });
+    const worst = Object.entries(r.gripes || {}).sort((a, b) => b[1] - a[1])[0];
+    if ((fall < -0.02 || (worst && worst[1] > 3)) && worst && worst[1] > 1 && !out.some((n) => n.tag === 'Reputation')) {
+      const fix = { quality: cfg.sourcing < exq.sourcing ? { label: 'Buy better ingredients again', apply: (c) => { c.sourcing = Math.round(exq.sourcing); } } : null, portion: cfg.menu.portion < exq.portion ? { label: 'Restore the portions', apply: (c) => { c.menu.portion = Math.round(exq.portion); } } : null, price: cfg.menu.priceAdj > exq.priceAdj ? { label: 'Take prices back to where they were', apply: (c) => { c.menu.priceAdj = Math.round(exq.priceAdj); } } : null }[worst[0]];
+      const why = { wait: 'waiting: for a table, for a server, for the check', kitchen: 'slow food', price: 'prices that feel too high for what arrives', quality: 'the quality of the food', portion: 'small portions', room: 'a room that does not suit the people it attracts', extras: 'things that used to be included' }[worst[0]];
+      add({ tag: 'Reputation', value: lost(Math.max(3, worst[1])) + 40, title: 'Your public rating is slipping', body: 'Tonight moves it from ' + RS.stars(game.reputation).toFixed(1) + ' to ' + RS.stars(r.reputationNext).toFixed(1) + ' stars. The biggest complaint was ' + why + '. Traffic follows the rating with a lag, so the cost of tonight shows up next week.', action: fix || undefined });
+    }
+
     // The owner in the wrong job.
     const o = cfg.owner, role = RS.OWNER_ROLES.find((x) => x.id === o.role), best = ['cooking', 'business', 'vibe'].sort((a, b) => o[b] - o[a])[0];
     const fit = { cooking: 'chef', business: 'office', vibe: 'floor' }, word = { cooking: 'cooking', business: 'business sense', vibe: 'way with guests' };
@@ -126,6 +144,7 @@
     if (hero) good.push(hero.it.name + ' carried the night: ' + hero.qty + ' sold, ' + RS.money(hero.cm * hero.qty) + ' in contribution.');
     const batch = food.filter((x) => x.it.prep === 'batch' && x.qty >= 4).sort((a, b) => b.cmPct - a.cmPct)[0];
     if (batch) good.push(batch.it.name + ' kept ' + RS.pct(batch.cmPct) + ' of its price and never touched the line during service.');
+    if (RS.stars(r.reputationNext) > RS.stars(game.reputation) + 0.02) good.push('Your public rating is climbing: ' + RS.stars(r.reputationNext).toFixed(1) + ' stars. More people will come looking for you.');
     if (r.sat >= 82) good.push('Guests left happy: satisfaction ' + r.sat.toFixed(0) + ' of 100.');
     if (r.primeCost && r.primeCost < 0.6) good.push('Prime cost (food plus labor) held at ' + RS.pct(r.primeCost) + '. Under 60 is where full-service rooms make money.');
     Object.keys(cfg.locks).filter((k) => cfg.locks[k]).length && good.push('Every recommendation here leaves your non-negotiables alone.');

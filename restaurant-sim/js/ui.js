@@ -42,7 +42,7 @@
     const wm = RS.lerp(0.9, 1.35, c.staff.experience / 100), area = c.room.w * c.room.h, seats = RS.seatCount(c);
     const prep = menu.reduce((x, i) => x + (i.prepMin || 0), 0) + RS.DELIGHTERS.reduce((x, d) => x + (c.delighters[d.id] ? d.prepMin : 0), 0);
     const labor = (c.staff.servers * 77 * wm + c.staff.bussers * 112 * wm + c.staff.hosts * 110.5 * wm + (c.room.bar.on ? c.staff.bartenders : 0) * 97.5 * wm + c.staff.cooks * 200 * wm + (seats > 90 ? 272 : 136) + prep / 60 * 22 + Object.values(RS.ownerLabor(c)).reduce((x, y) => x + y, 0)) * 1.16;
-    const occ = area * RS.lerp(1.0, 3.8, c.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[c.room.line] + 40 + 0.3 * area + 160;
+    const occ = area * RS.lerp(1.0, 5.6, c.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[c.room.line] + 40 + 0.3 * area + 160;
     const ingr = RS.ingredientCount(c), fixed = labor + occ + ingr * 2 * RS.costMult(c);
     const per = check - cost - check * 0.063 - (0.5 + 1.2 * c.atmosphere.formality / 100);
     return { check, foodPct: check ? cost / check : 0, labor, occ, fixed, breakeven: per > 0 ? Math.ceil(fixed / per) : 0, ingr, seats, items: menu.length };
@@ -134,7 +134,8 @@
       };
       return '<h2>The menu</h2><p class="lede">In a real engagement the chef writes this. Here, pick from a list. Watch the inventory count: every new ingredient is something to order, store and throw away.</p>' +
         '<div class="grid3">' + slider('menu.alcoholFocus', 'How much is this place about drinking?', 'Food first', 'Wine and cocktails lead', { lock: true }) +
-        slider('menu.priceAdj', 'Price adjustment', '-15%', '+25%', { min: -15, max: 25, fmt: (v) => (v > 0 ? '+' : '') + v + '%' }) +
+        slider('menu.priceAdj', 'Price adjustment', '-15%', '+25%', { min: -15, max: 25, fmt: (v) => (v > 0 ? '+' : '') + v + '%', hint: 'Guests notice sudden jumps. Small steps stick.' }) +
+        slider('menu.portion', 'Portions', 'Tight, every gram counted', 'Generous', { lock: true, hint: 'Smaller plates cost less tonight. Guests compare them with what they got last time.' }) +
         '<div class="sel"><label>Menu size</label><div class="btnrow"><button class="ghost" data-act="msize" data-k="tight">Tight</button><button class="ghost" data-act="msize" data-k="core">Core</button><button class="ghost" data-act="msize" data-k="all">Everything</button></div></div></div>' +
         '<div class="tablewrap"><table class="menu"><thead><tr><th></th><th>Item</th><th class="num">Price</th><th class="num">Cost</th><th class="num">Margin</th><th>Kitchen</th><th>Station</th><th>Play</th></tr></thead>' +
         course('starter', 'Starters') + course('main', 'Mains') + course('side', 'Sides') + course('dessert', 'Desserts') + course('drink', 'Drinks') + '</table></div>' +
@@ -143,7 +144,7 @@
     () => {
       const c = cfg(), p = proforma(), L = RS.layoutTables(c);
       const locks = Object.keys(c.locks).filter((k) => c.locks[k]);
-      const names = { priceTier: 'price point', sourcing: 'ingredients', 'atmosphere.light': 'lighting', 'atmosphere.noise': 'sound', 'atmosphere.formality': 'dress', 'atmosphere.spacing': 'table spacing', 'atmosphere.tableSize': 'table size', 'diner.touch': 'service style', 'diner.pace': 'pace', 'staff.style': 'staff manner', 'staff.experience': 'staff seasoning', 'menu.alcoholFocus': 'drinks focus' };
+      const names = { priceTier: 'price point', sourcing: 'ingredients', 'atmosphere.light': 'lighting', 'atmosphere.noise': 'sound', 'atmosphere.formality': 'dress', 'atmosphere.spacing': 'table spacing', 'atmosphere.tableSize': 'table size', 'diner.touch': 'service style', 'diner.pace': 'pace', 'staff.style': 'staff manner', 'staff.experience': 'staff seasoning', 'menu.alcoholFocus': 'drinks focus', 'menu.portion': 'portions' };
       return '<h2>' + (game.started ? 'Ready for ' + RS.DAYS[game.day % 7] + '?' : 'Open the doors') + '</h2><p class="lede">' + esc(c.name) + ': ' + p.seats + ' seats, ' + p.items + ' menu items, ' + (c.staff.servers + c.staff.bussers + c.staff.hosts + c.staff.cooks + (c.room.bar.on ? c.staff.bartenders : 0)) + ' on the schedule. You need about <b>' + p.breakeven + ' guests</b> at ' + RS.money(p.check) + ' each to break even on a night.</p>' +
         (locks.length ? '<p class="lede">Non-negotiable: ' + locks.map((k) => names[k] || k).join(', ') + '.</p>' : '') +
         (L.missing ? '<p class="warn">' + L.missing + ' tables do not fit in the room at this spacing. They will be left out.</p>' : '') +
@@ -224,7 +225,7 @@
     if (!sim || screen !== 'service') return;
     const s = sim.stats, waiting = sim.parties.filter((p) => p.state === 'waiting').reduce((a, p) => a + p.size, 0), seated = sim.parties.filter((p) => p.table && p.state !== 'leaving').reduce((a, p) => a + p.size, 0);
     const sat = s.sats.length ? s.sats.reduce((a, b) => a + b, 0) / s.sats.length : 0;
-    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + '</span><b>' + RS.clock(sim.t) + '</b></div>' +
+    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + '<br>' + RS.stars(game.reputation).toFixed(1) + ' &#9733; public rating</span><b>' + RS.clock(sim.t) + '</b></div>' +
       '<div class="speed">' + [['pause', '&#10074;&#10074;', 'Pause'], ['normal', '&gt;', 'One dinner in about 5 minutes'], ['fast', '&gt;&gt;', 'One dinner in about 3 minutes'], ['week', '&gt;&gt;&gt;', 'A whole week in about a minute, night after night']].map((x) => '<button title="' + x[2] + '" data-act="speed" data-s="' + x[0] + '" class="' + ((x[0] === 'pause' ? paused : (!paused && speed === x[0])) ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>' +
       '<div class="kpis"><div><small>Sales</small><b>' + RS.money(s.revenue) + '</b></div><div><small>Guests served</small><b>' + s.covers + '</b></div><div><small>In the room</small><b>' + seated + ' / ' + RS.seatCount(cfg()) + '</b></div>' +
       '<div><small>Waiting at door</small><b class="' + (waiting > 6 ? 'bad' : '') + '">' + waiting + '</b></div><div><small>Walked out</small><b class="' + (s.walkouts ? 'bad' : '') + '">' + (s.walkouts + s.turnedAway) + '</b></div><div><small>Mood so far</small><b>' + (sat ? sat.toFixed(0) : '&ndash;') + '</b></div></div>';
@@ -234,10 +235,8 @@
   const endNight = () => {
     const r = sim.results(); lastResults = r;
     lastAdvice = RS.advise(game, r);
-    game.history.push(r); game.cash += r.profit; game.reputationPrev = game.reputation; game.reputation = r.reputationNext;
-    if (game.debtLeft > 0) game.debtLeft = Math.max(0, game.debtLeft - Math.max(0, r.profit));
     const weekEnd = game.day % 7 === 6;
-    game.day++;
+    RS.closeNight(game, r);
     if (speed === 'week' && !weekEnd) { sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 }; selTable = null; selStaff = null; return; }
     if (speed === 'week') speed = 'normal';
     sim = null; screen = 'review'; renderReview();
@@ -260,6 +259,15 @@
     return '<div class="panel"><h3>Profit by night</h3><svg class="chart" viewBox="0 0 100 44" preserveAspectRatio="none">' + h.map((r, i) => { const hh = Math.abs(r.profit) / max * 18; return '<rect x="' + (i * bw + bw * 0.15) + '" y="' + (r.profit >= 0 ? 20 - hh : 20) + '" width="' + bw * 0.7 + '" height="' + Math.max(0.4, hh) + '" fill="' + (r.profit >= 0 ? '#5fae6e' : '#d9614f') + '"><title>' + r.dayName + ': ' + RS.money(r.profit) + '</title></rect>'; }).join('') +
       '<line x1="0" x2="100" y1="20" y2="20" stroke="#8a8172" stroke-width="0.2"/></svg><div class="chartlbl">' + h.map((r) => '<span>' + r.dayName.slice(0, 2) + '<br>' + RS.money(r.profit) + '</span>').join('') + '</div></div>';
   };
+  const reviewsHTML = (r) => {
+    const bad = { wait: 'Stood at the door forever, then waited again for the check.', kitchen: 'Forty minutes for a main. We nearly left.', price: 'Not worth what they charge now.', quality: 'Used to be better. The food tastes like corners are being cut.', portion: 'Portions have shrunk. Left hungry.', room: 'Wrong room for us. Could not hear each other, or could hear everything.', extras: 'They stopped doing the little things we came for.' };
+    const nice = { food: 'You can taste the ingredients. Worth every dollar.', service: 'Staff who know what they are doing and seem glad you came.', room: 'The room is exactly right. We stayed for hours.', extras: 'The small touches made the night.', portion: 'Generous plates. Nobody leaves hungry.' };
+    const g = Object.entries(r.gripes).filter((e) => e[1] > 1.2).sort((a, b) => b[1] - a[1]).slice(0, 2), p = Object.entries(r.praise).filter((e) => e[1] > 1.5).sort((a, b) => b[1] - a[1]).slice(0, 2);
+    const hist = game.history.slice(-8).map((x) => x.starsNext.toFixed(1));
+    return '<div class="panel"><h3>What guests are saying online</h3><p><b style="font-size:20px">' + RS.stars(game.reputation).toFixed(1) + ' &#9733;</b> <span class="muted">' + (hist.length > 1 ? 'recent nights: ' + hist.join(' &rarr; ') : 'your first night of reviews') + '</span></p>' +
+      g.map((e) => '<p class="quote bad">&ldquo;' + bad[e[0]] + '&rdquo;</p>').join('') + p.map((e) => '<p class="quote good">&ldquo;' + nice[e[0]] + '&rdquo;</p>').join('') +
+      (!g.length && !p.length ? '<p class="muted">Nothing strong either way tonight.</p>' : '') + '<p class="hint">The rating follows how guests felt when they left. Next week\'s traffic follows the rating.</p></div>';
+  };
   const renderReview = () => {
     const r = lastResults, a = lastAdvice, full = cfg().owner.detail >= 35;
     const line = (label, v, cls, pctOf) => '<tr class="' + (cls || '') + '"><td>' + label + '</td><td class="num">' + RS.money(v) + '</td><td class="num muted">' + (pctOf ? RS.pct((/tot/.test(cls || '') ? v : Math.abs(v)) / pctOf) : '') + '</td></tr>';
@@ -271,10 +279,10 @@
       '<div class="navrow"><button class="ghost" data-act="tweak">Adjust before next service</button><button class="primary" data-act="next">Run ' + RS.DAYS[game.day % 7] + '</button><button class="ghost" data-act="week">Run the week fast</button></div></header>' + goalHTML() +
       (wk ? '<div class="goal"><b>The week</b><span>' + RS.money(wk.rev) + ' in sales, ' + RS.money(wk.pr) + ' profit (' + RS.pct(wk.rev ? wk.pr / wk.rev : 0) + '), ' + wk.cov + ' guests.</span></div>' : '') +
       '<div class="kpis big"><div><small>Sales</small><b>' + RS.money(r.revenue) + '</b></div><div><small>Profit</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.money(r.profit) + '</b></div><div><small>Margin</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.pct(r.margin) + '</b></div>' +
-      '<div><small>Guests</small><b>' + r.covers + '</b></div><div><small>Check per guest</small><b>' + RS.money(r.avgCheck) + '</b></div><div><small>Guest mood</small><b>' + r.sat.toFixed(0) + '</b></div><div><small>Table turns</small><b>' + r.turns.toFixed(1) + '</b></div><div><small>Reputation</small><b>' + (game.reputation >= (game.reputationPrev || 0.5) ? '&#9650; ' : '&#9660; ') + Math.round(game.reputation * 100) + '</b></div></div>' +
+      '<div><small>Guests</small><b>' + r.covers + '</b></div><div><small>Check per guest</small><b>' + RS.money(r.avgCheck) + '</b></div><div><small>Guest mood</small><b>' + r.sat.toFixed(0) + '</b></div><div><small>Table turns</small><b>' + r.turns.toFixed(1) + '</b></div><div><small>Public rating</small><b class="' + (game.reputation >= game.reputationPrev ? 'good' : 'bad') + '">' + (game.reputation >= game.reputationPrev ? '&#9650; ' : '&#9660; ') + RS.stars(game.reputation).toFixed(1) + ' &#9733;</b></div></div>' +
       '<div class="cols"><div><div class="panel"><h3>What to change</h3>' + (a.notes.length ? a.notes.map((n, i) => '<div class="note"><span class="tag">' + n.tag + '</span><b>' + esc(n.title) + '</b>' + (n.value > 15 ? '<em class="val">about ' + RS.money(n.value) + ' a night</em>' : '') + '<p>' + esc(n.body) + '</p>' + (n.action ? '<button class="ghost apply" data-act="apply" data-i="' + i + '">' + esc(n.action.label) + '</button>' : '') + '</div>').join('') : '<p class="muted">Nothing urgent. A clean night.</p>') +
       (a.hidden ? '<p class="muted">' + a.hidden + ' smaller notes held back. Raise "how much you want to see" under Experience to get them.</p>' : '') + '</div>' +
-      (a.good.length ? '<div class="panel"><h3>What worked</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
+      reviewsHTML(r) + (a.good.length ? '<div class="panel"><h3>What worked</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
       '<div><div class="panel"><h3>Tonight\'s books</h3><table class="pl">' + line('Food', r.foodRev) + line('Drinks', r.bevRev) + line('Sales', r.revenue, 'tot') +
       line('Ingredients on the plate', -r.cogs, '', r.revenue) + line('Spoilage and overproduction', -r.waste, '', r.revenue) + (r.delight ? line('Delighters and comps', -r.delight, '', r.revenue) : '') +
       line('Labor', -r.laborTotal, '', r.revenue) + sub(r.labor) + line('Rent and overhead', -r.occTotal, '', r.revenue) + sub(r.occupancy) + line('Card fees', -r.card, '', r.revenue) + (r.ownerSave > 1 ? line('Saved by the owner\'s desk work', r.ownerSave, '', r.revenue) : '') + line('Profit', r.profit, 'tot ' + (r.profit >= 0 ? 'good' : 'bad'), r.revenue) + '</table>' +
