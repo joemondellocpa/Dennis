@@ -236,7 +236,7 @@
     if (!sim || screen !== 'service') return;
     const s = sim.stats, waiting = sim.parties.filter((p) => p.state === 'waiting').reduce((a, p) => a + p.size, 0), seated = sim.parties.filter((p) => p.table && p.state !== 'leaving').reduce((a, p) => a + p.size, 0);
     const sat = s.sats.length ? s.sats.reduce((a, b) => a + b, 0) / s.sats.length : 0;
-    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + </span><b>' + RS.clock(sim.t) + '</b></div>' +
+    $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + '</span><b>' + RS.clock(sim.t) + '</b></div>' +
       '<div class="speed">' + [['pause', '&#10074;&#10074;', 'Pause'], ['normal', '&gt;', 'One dinner in about 5 minutes'], ['fast', '&gt;&gt;', 'One dinner in about 3 minutes'], ['week', '&gt;&gt;&gt;', 'A whole week in about a minute, night after night']].map((x) => '<button title="' + x[2] + '" data-act="speed" data-s="' + x[0] + '" class="' + ((x[0] === 'pause' ? paused : (!paused && speed === x[0])) ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>' +
       '<div class="kpis"><div><small>Sales</small><b>' + RS.money(s.revenue) + '</b></div><div><small>Guests served</small><b>' + s.covers + '</b></div><div><small>In the room</small><b>' + seated + ' / ' + RS.seatCount(cfg()) + '</b></div>' +
       '<div><small>Waiting at door</small><b class="' + (waiting > 6 ? 'bad' : '') + '">' + waiting + '</b></div><div><small>Walked out</small><b class="' + (s.walkouts ? 'bad' : '') + '">' + (s.walkouts + s.turnedAway) + '</b></div><div><small>Mood so far</small><b>' + (sat ? sat.toFixed(0) : '&ndash;') + '</b></div></div>';
