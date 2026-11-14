@@ -1,4 +1,4 @@
-# Service: restaurant simulator
+# Non-Shitty Restaurant Tycoon
 
 A browser demo for restaurateurs. Describe the restaurant (room, service, menu, non-negotiables), watch a dinner service run from above, then read the night's books and the advice.
 

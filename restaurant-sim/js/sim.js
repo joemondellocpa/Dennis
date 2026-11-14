@@ -29,10 +29,20 @@
     Object.keys(RS.STATION_CAP).forEach((s) => {
       if (menu.some((i) => i.station === s && i.course !== 'drink' && i.prep !== 'batch')) { sim.stations[s] = { cap: Math.max(1, Math.round(RS.STATION_CAP[s] * lineMult)), active: 0, queued: 0 }; st.stationWait[s] = 0; st.stationBusy[s] = 0; }
     });
+    // The line: one cook per station first, extras double up. The first one runs the pass.
+    const stNames = Object.keys(sim.stations);
+    sim.cookList = [];
+    for (let i = 0; i < cfg.staff.cooks; i++) {
+      const station = stNames.length ? stNames[i % stNames.length] : null, si = stNames.indexOf(station);
+      const r = station ? RS.stationRect(cfg.room, stNames.length, si) : { x: 1, y: -2, w: 1, h: 1 };
+      sim.cookList.push(Object.assign({ id: 'cook' + i, role: 'cook', station, plates: 0, x: r.x + 0.45 + Math.floor(i / Math.max(1, stNames.length)) * 0.6, y: r.y + r.h + 0.5 }, RS.persona('cook', i, cfg, { station, lead: i === 0 })));
+    }
+    let cookTurn = 0;
+    const credit = (sname) => { const own = sim.cookList.filter((c) => c.station === sname); const c = own.length ? own[cookTurn++ % own.length] : sim.cookList[cookTurn++ % Math.max(1, sim.cookList.length)]; if (c) c.plates++; };
     const say = (msg, kind) => { sim.log.unshift({ t: sim.t, msg, kind: kind || 'info' }); if (sim.log.length > 60) sim.log.pop(); };
 
     /* ---------- staff ---------- */
-    const mk = (role, i, home) => ({ id: role + i, role, x: home.x, y: home.y, home, queue: [], cur: null, busy: 0 });
+    const mk = (role, i, home) => Object.assign({ id: role + i, role, x: home.x, y: home.y, home, queue: [], cur: null, busy: 0, done: 0, tables: 0, sales: 0, tips: 0 }, RS.persona(role, i, cfg));
     const inRoom = (p) => ({ x: RS.clamp(p.x, 0.5, cfg.room.w - 0.5), y: RS.clamp(p.y, 0.5, cfg.room.h - 0.5) });
     const servers = [], bussers = [], hosts = [], tenders = [];
     for (let i = 0; i < cfg.staff.servers; i++) servers.push(mk('server', i, inRoom({ x: G.pass.x + (i - (cfg.staff.servers - 1) / 2) * 0.7, y: 1.1 })));
@@ -84,7 +94,7 @@
       if (c.phase === 'pickup') { if (move(a, c.pickup, 20, dt)) c.phase = 'dest'; return; }
       if (c.phase === 'dest') { if (move(a, c.dest, 20, dt)) { c.phase = 'dwell'; if (c.onStart) c.onStart(); } return; }
       c.remain -= dt;
-      if (c.remain <= 0) { a.cur = null; if (c.onDone) c.onDone(); }
+      if (c.remain <= 0) { a.cur = null; a.done++; if (c.onDone) c.onDone(); }
     };
 
     /* ---------- demand ---------- */
@@ -95,7 +105,7 @@
     st.demandCovers = Math.round(target);
     const maxTable = Math.max.apply(null, sim.tables.map((t) => t.seats).concat([0]));
     const arrivals = []; let planned = 0, pid = 0;
-    const demoW = (d) => { let e = 0; ['light', 'noise', 'formality', 'spacing'].forEach((k) => { e += d.likes[k] * (A[k] - 0.5); }); return d.base * Math.exp(e * 1.6) * (d.id === 'solo' && !G.bar ? 0.5 : 1); };
+    const demoW = (d) => RS.demoWeight(d, cfg, !!G.bar);
     while (planned < target) {
       const demo = rnd.weighted(RS.DEMOS, demoW), size = rnd.pick(demo.sizes);
       // Triangular: builds from 5, peaks around 7:30, tails off by last seating.
@@ -188,8 +198,8 @@
           if (x.state === 'queued') {
             const batch = x.it.prep === 'batch', sname = stationOf(x.it), sn = sim.stations[sname];
             if (sim.cookActive >= cookCap) { st.cookWait += dt; if (sn && !batch) sn.queued++; }
-            else if (batch || !sn) { x.state = 'cooking'; x.remain = Math.max(1, x.it.cookMin) + 0.8; x.sn = null; sim.cookActive++; }
-            else if (sn.active < sn.cap) { x.state = 'cooking'; x.remain = (x.it.cookMin * rnd.range(0.85, 1.25) + 1) * (1.15 - 0.3 * exp); x.sn = sn; x.sname = sname; sn.active++; sim.cookActive++; }
+            else if (batch || !sn) { x.state = 'cooking'; x.remain = Math.max(1, x.it.cookMin) + 0.8; x.sn = null; sim.cookActive++; credit(null); }
+            else if (sn.active < sn.cap) { x.state = 'cooking'; x.remain = (x.it.cookMin * rnd.range(0.85, 1.25) + 1) * (1.15 - 0.3 * exp); x.sn = sn; x.sname = sname; sn.active++; sim.cookActive++; credit(sname); }
             else { st.stationWait[sname] += dt; sn.queued++; }
           }
           if (x.state === 'cooking') {
@@ -277,6 +287,7 @@
       p.sat = satisfaction(p); st.sats.push(p.sat);
       st.tips += p.check * RS.clamp(0.18 + (p.sat - 76) * 0.003 + (D.sweets ? 0.01 : 0), 0.08, 0.28);
       const t = p.table; t.party = null; t.state = 'dirty'; t.lastParty = p;
+      if (t.server) { t.server.tables++; t.server.sales += p.check; t.server.tips += p.check * RS.clamp(0.18 + (p.sat - 76) * 0.003, 0.08, 0.28); }
       const bus = { type: 'bus', table: t, dest: { x: t.cx, y: t.cy + (t.h || 0) / 2 + 0.5 }, dwell: t.bar ? 1 : 3 + 2.5 * A.formality, onDone: () => { t.state = 'empty'; } };
       if (t.bar) addTask(t.server, bus); else addTask(null, bus);
       exit(p);
@@ -290,7 +301,7 @@
     const arrive = (a) => {
       st.arrivals += a.size;
       if (a.size > maxTable + (maxTable >= 4 ? 1 : 0)) { st.turnedAway += a.size; say('Turned away a party of ' + a.size + ': no table that big', 'bad'); return; }
-      const p = { id: a.id, demo: a.demo, size: a.size, x: G.entrance.x, y: G.entrance.y, state: 'walkin', arrivedAt: sim.t, lines: [], check: 0, drinkers: [], waits: {}, eatUntil: 0,
+      const p = { id: a.id, demo: a.demo, size: a.size, reason: RS.visitReason(a.demo, game, rnd), x: G.entrance.x, y: G.entrance.y, state: 'walkin', arrivedAt: sim.t, lines: [], check: 0, drinkers: [], waits: {}, eatUntil: 0,
         patience: (18 + 18 * rnd()) * a.demo.patience * (G.bar ? 1.5 : 1), barOk: a.size <= 2 && (a.demo.id === 'solo' || rnd() < 0.3) };
       sim.parties.push(p);
       st.demos[a.demo.id] = (st.demos[a.demo.id] || 0) + a.size;
@@ -313,6 +324,7 @@
         p.waits.seat = sim.t - p.arrivedAt; st.seatWait.push(p.waits.seat);
         st.partiesSeated++; st.covers += p.size; st.seatsOffered += t.seats; st.seatsUsed += Math.min(p.size, t.seats);
         hostFreeAt[hi] = sim.t + seatTime;
+        if (hosts[hi]) hosts[hi].tables++;
         if (hosts[hi]) addTask(hosts[hi], { type: 'visit', dest: { x: t.cx, y: t.cy + (t.h || 0) / 2 + 0.6 }, dwell: 0.3 });
         p.state = 'toTable'; p.target = { x: t.cx, y: t.cy };
         p.onArrive = () => {

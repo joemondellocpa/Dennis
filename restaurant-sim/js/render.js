@@ -1,7 +1,7 @@
 /* Top-down drawing of the room. Used live during service (with a sim) and as the layout editor (without one). */
 (function () {
   const RS = window.RS;
-  RS.ROLE_COLOR = { server: '#f4f1e8', busser: '#9aa7b8', host: '#e0c06a', bartender: '#c58cf0', owner: '#ff5d5d', cook: '#ffffff' };
+  RS.ROLE_COLOR = { server: '#f4f1e8', busser: '#9aa7b8', host: '#e0c06a', bartender: '#c58cf0', owner: '#ff5d5d', cook: '#e8734a' };
   const TABLE_COLOR = { empty: null, taken: '#c9a24a', seated: '#d98b3a', waitFood: '#d98b3a', eating: '#5fae6e', waitClear: '#7b9bd1', waitCheck: '#7b9bd1', paying: '#7b9bd1', dirty: '#6b5b4d' };
 
   RS.view = (canvas, cfg, withKitchen) => {
@@ -16,7 +16,7 @@
   const rr = (c, x, y, w, h, r) => { c.beginPath(); if (c.roundRect) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h); };
   const dot = (c, x, y, r, fill, stroke) => { c.beginPath(); c.arc(x, y, r, 0, 6.2832); c.fillStyle = fill; c.fill(); if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1; c.stroke(); } };
 
-  RS.draw = (canvas, cfg, layout, sim, sel) => {
+  RS.draw = (canvas, cfg, layout, sim, sel, selStaff) => {
     const v = RS.view(canvas, cfg, !!sim), c = canvas.getContext('2d'), room = cfg.room, g = layout.geom, s = v.s;
     c.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
     c.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
@@ -33,18 +33,15 @@
     if (sim) {
       c.fillStyle = '#2a3138'; rr(c, v.X(0), v.Y(-v.K), room.w * s, v.K * s - 2, 4); c.fill();
       c.strokeStyle = '#55616d'; c.lineWidth = 1.5; c.stroke();
-      const names = Object.keys(sim.stations), n = names.length, sw = (room.w - 0.6) / Math.max(1, n);
+      const names = Object.keys(sim.stations), n = names.length;
       names.forEach((name, i) => {
-        const stn = sim.stations[name], x = 0.3 + i * sw, y = -v.K + 0.35, w = sw - 0.3, h = 1.25;
+        const stn = sim.stations[name], R0 = RS.stationRect(room, n, i), x = R0.x, y = R0.y, w = R0.w, h = R0.h;
         const load = stn.active / stn.cap;
         c.fillStyle = stn.queued > 0 ? '#7a2e2e' : (load > 0.7 ? '#7a5a2a' : '#3b4650'); rr(c, v.X(x), v.Y(y), w * s, h * s, 3); c.fill();
         c.fillStyle = '#ffb84d'; c.fillRect(v.X(x), v.Y(y + h) - 4, w * s * Math.min(1, load), 4);
         c.fillStyle = '#e6edf3'; c.fillText(RS.STATION_LABEL[name].split(' ')[0] + ' ' + stn.active + '/' + stn.cap + (stn.queued ? ' +' + stn.queued : ''), v.X(x + w / 2), v.Y(y + h / 2));
-        for (let k = 0; k < stn.active; k++) dot(c, v.X(x + 0.35 + k * 0.45), v.Y(y + h + 0.45), s * 0.17, RS.ROLE_COLOR.cook, '#333');
       });
       // Cooks who are not on a station right now stand at the pass.
-      const idle = Math.max(0, sim.cooks - Math.ceil(sim.cookActive / 3));
-      for (let k = 0; k < idle; k++) dot(c, v.X(g.kitchenDoor.x - 0.6 - k * 0.45), v.Y(-0.5), s * 0.17, RS.ROLE_COLOR.cook, '#333');
       const waiting = sim.tickets.filter((t) => t.ready && !t.delivered).length;
       c.fillStyle = waiting > 3 ? '#ff8c5a' : '#9aa7b8'; c.textAlign = 'left';
       c.fillText('KITCHEN   plates on the pass: ' + waiting, v.X(0.3), v.Y(-0.35)); c.textAlign = 'center';
@@ -91,8 +88,9 @@
       else for (let i = 0; i < p.size; i++) dot(c, v.X(p.x + (i % 3) * 0.32 - 0.3), v.Y(p.y + Math.floor(i / 3) * 0.32), R, p.demo.color, p.walked ? '#ff3b3b' : '#1b1610');
     });
     // Staff, drawn as squares so they never read as guests.
-    sim.agents.forEach((a) => {
-      const z = s * 0.38; c.fillStyle = RS.ROLE_COLOR[a.role]; c.strokeStyle = '#111'; c.lineWidth = 1.2;
+    sim.agents.concat(sim.cookList).forEach((a) => {
+      const z = s * 0.38;
+      if (a === selStaff) { c.strokeStyle = '#fff'; c.lineWidth = 2; c.beginPath(); c.arc(v.X(a.x), v.Y(a.y), z * 1.1, 0, 6.2832); c.stroke(); } c.fillStyle = RS.ROLE_COLOR[a.role]; c.strokeStyle = '#111'; c.lineWidth = 1.2;
       c.beginPath(); c.rect(v.X(a.x) - z / 2, v.Y(a.y) - z / 2, z, z); c.fill(); c.stroke();
       if (a.cur && (a.cur.type === 'food' || a.cur.type === 'drinks') && a.cur.phase === 'dest') dot(c, v.X(a.x) + z * 0.5, v.Y(a.y) - z * 0.5, z * 0.28, a.cur.type === 'food' ? '#ffb84d' : '#8fd3ff');
     });

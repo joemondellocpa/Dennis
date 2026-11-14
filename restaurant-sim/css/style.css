@@ -95,7 +95,8 @@ table.pl td { padding: 5px 4px; } table.pl tr.tot td { border-top: 1px solid var
 .legend i, .dot, .sq { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; } .dot, .legend i.dot { border-radius: 50%; }
 .side { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-y: auto; min-height: 0; }
 .clock { display: flex; justify-content: space-between; align-items: baseline; } .clock b { font: 400 30px var(--serif); color: var(--brass); } .clock span { color: var(--muted); }
-.speed { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+.speed { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0; }
+.speed button { font-weight: 700; letter-spacing: 2px; font-size: 15px !important; }
 .speed button, .tabs button { background: var(--panel2); border: 1px solid var(--line); padding: 6px 4px; font-size: 13px; }
 .speed button.on, .tabs button.on { background: var(--brass); color: #1b1610; border-color: var(--brass); font-weight: 600; }
 .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 14px; }

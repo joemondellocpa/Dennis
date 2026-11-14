@@ -49,8 +49,77 @@ RS.DEMOS = [
   { id: 'celebration', label: 'Celebration', color: '#ff8c5a', sizes: [2, 4, 4, 6, 6, 8], ages: 'mixed', spend: 1.3, alc: 1.4, patience: 0.9, linger: 1.4, base: 0.5,
     likes: { light: -0.1, noise: 0.3, formality: 0.6, spacing: 0.3, touch: 0.9 } },
   { id: 'tourists', label: 'Visitors', color: '#5fd0c8', sizes: [2, 2, 4], ages: '30 to 70', spend: 1.0, alc: 0.8, patience: 0.9, linger: 1.0, base: 0.5,
-    likes: { light: 0.5, noise: 0.1, formality: 0, spacing: 0.2, touch: 0.6 } }
+    likes: { light: 0.5, noise: 0.1, formality: 0, spacing: 0.2, touch: 0.6 } },
+  { id: 'foodie', label: 'Food lovers', color: '#d9d24a', sizes: [2, 2, 2, 4], ages: '27 to 55', spend: 1.25, alc: 1.15, patience: 1.2, linger: 1.1, base: 0.45,
+    likes: { light: 0, noise: -0.1, formality: 0.1, spacing: 0.1, touch: 0.4 } }
 ];
+
+/* What the concept itself pulls in, before the room has its say. */
+RS.CUISINE_DRAW = {
+  italian: { family: 1.5, date: 1.3, friends: 1.2, business: 0.7 },
+  steakhouse: { business: 2.6, celebration: 1.7, date: 1.0, family: 0.55, friends: 0.7, foodie: 0.7 },
+  american: { friends: 1.6, family: 1.2, solo: 1.3, business: 0.8 },
+  japanese: { foodie: 2.0, date: 1.5, business: 1.3, family: 0.5, solo: 1.3 },
+  french: { date: 1.8, celebration: 1.4, foodie: 1.5, family: 0.45, tourists: 1.3 }
+};
+RS.demoWeight = (d, cfg, hasBar) => {
+  const a = cfg.atmosphere, A = { light: a.light / 100, noise: a.noise / 100, formality: a.formality / 100, spacing: a.spacing / 100 };
+  let e = 0; Object.keys(A).forEach((k) => { e += d.likes[k] * (A[k] - 0.5); });
+  let w = d.base * Math.exp(e * 1.6) * ((RS.CUISINE_DRAW[cfg.cuisine] || {})[d.id] || 1);
+  const price = cfg.priceTier / 100 - 0.5, src = cfg.sourcing / 100 - 0.5, alc = cfg.menu.alcoholFocus / 100 - 0.5;
+  // Price point: expense accounts and occasions follow it up, families and big casual groups drop away.
+  w *= Math.exp(price * ({ business: 2.2, celebration: 1.6, foodie: 0.8, date: 0.5, family: -2.0, friends: -1.0, solo: -0.6 }[d.id] || 0));
+  w *= Math.exp(src * ({ foodie: 2.4, date: 0.4, tourists: 0.3 }[d.id] || 0));
+  w *= Math.exp(alc * ({ friends: 1.0, date: 0.5, family: -1.2 }[d.id] || 0));
+  if (d.id === 'solo' && !hasBar) w *= 0.5;
+  if (d.id === 'friends' && hasBar) w *= 1.15;
+  return w;
+};
+
+/* Why this particular table came out tonight. */
+RS.REASONS = {
+  date: ['Date night', 'First date', 'Anniversary dinner', 'Sitter booked, finally out'],
+  business: ['Client dinner', 'Team dinner on the company card', 'Closing a deal', 'Interviewing a hire over dinner'],
+  family: ['Family night out', 'Grandparents are in town', 'Nobody wanted to cook', 'Kid picked the place'],
+  friends: ['Catching up with friends', 'Dinner before a night out', 'Monthly dinner club', 'Old roommates reunion'],
+  solo: ['Regular, here most weeks', 'Regular, always the same seat', 'In town for work, eating alone'],
+  celebration: ['Birthday', 'Anniversary', 'Promotion', 'Graduation', 'Engagement'],
+  tourists: ['Visiting, found you on a map', 'Hotel concierge sent them', 'Read a review before the trip'],
+  foodie: ['Came for one specific dish', 'Following the chef', 'Heard about where you buy your ingredients', 'Working through the best-of list']
+};
+RS.visitReason = (demo, game, rnd) => {
+  const cfg = game.cfg, x = rnd();
+  if (game.day < 10 && x < 0.2 && demo.id !== 'solo') return 'Curious about the new place';
+  if (game.day >= 5 && x < 0.2 + game.reputation * 0.22) return game.reputation > 0.55 && rnd() < 0.5 ? 'A friend recommended it' : 'Regulars, back again';
+  if (cfg.plays.some((p) => p.type === 'discount' || p.type === 'bogo') && x > 0.85) return 'Came for the deal';
+  if (cfg.room.bar.on && x > 0.93 && demo.id !== 'family') return 'Came for a drink, stayed for dinner';
+  return rnd.pick(RS.REASONS[demo.id]);
+};
+
+/* The people on the schedule. Stable from night to night. */
+const FIRST = ['Maya', 'Luis', 'Priya', 'Dante', 'Sofia', 'Marcus', 'Elena', 'Tomas', 'Aisha', 'Ben', 'Carmen', 'Jun', 'Nadia', 'Theo', 'Rosa', 'Kwame', 'Ines', 'Viktor', 'Lena', 'Omar', 'Grace', 'Hiro', 'Paloma', 'Dev'];
+const LAST = 'ABCDGHJKLMNOPRSTVW';
+const BIO = {
+  server: ['Remembers every regular\'s drink.', 'Studying for a sommelier exam on days off.', 'Came over from a hotel dining room.', 'Fastest hands on the floor, working on the small talk.', 'Actor between auditions. Guests love the specials recital.', 'Sells more dessert than anyone on the team.'],
+  busser: ['First restaurant job. Wants to be a server by summer.', 'Never lets a water glass run dry.', 'Works doubles to pay for culinary school.', 'Quiet, quick, and knows every table number cold.'],
+  host: ['Knows half the neighborhood by name.', 'Can quote a wait time to the minute.', 'Runs the reservation book like air traffic control.'],
+  bartender: ['Built the cocktail list.', 'Twelve regulars come in just to sit at this bar.', 'Pours fast and talks slow.', 'Competes in cocktail competitions.'],
+  cook: ['Came up through hotel banquets.', 'Culinary school grad on a first line job.', 'Started as the dishwasher here.', 'Ten years on a grill and the forearms to prove it.', 'Staged in three countries before landing here.', 'Calm when the board is full.'],
+  owner: ['You. Tonight you are working the room.']
+};
+RS.persona = (role, i, cfg, extra) => {
+  const r = RS.rng((role.charCodeAt(0) * 131 + role.length * 17 + i * 977 + cfg.cuisine.length * 53) >>> 0);
+  r(); r();
+  const exp = cfg.staff.experience / 100, style = cfg.staff.style / 100;
+  if (role === 'owner') return { name: 'The owner', title: 'Owner', years: null, bio: BIO.owner[0] };
+  const years = Math.max(0.5, Math.round(RS.lerp(0.6, 13, exp) * r.range(0.5, 1.6) * 2) / 2);
+  const name = FIRST[Math.floor(r() * FIRST.length + i * 5) % FIRST.length] + ' ' + LAST[Math.floor(r() * LAST.length)] + '.';
+  const title = { server: 'Server', busser: 'Busser and food runner', host: 'Host', bartender: 'Bartender', cook: (extra && extra.lead ? 'Sous chef' : 'Line cook') + (extra && extra.station ? ', ' + RS.STATION_LABEL[extra.station].toLowerCase() : '') }[role];
+  let bio = r.pick(BIO[role]);
+  if (role === 'server' || role === 'host') bio += style > 0.6 ? ' Trained in formal service.' : (style < 0.4 ? ' On a first-name basis with guests by the second visit.' : '');
+  return { name, title, years, bio };
+};
+RS.stationRect = (room, n, i) => { const sw = (room.w - 0.6) / Math.max(1, n); return { x: 0.3 + i * sw, y: -RS.KITCHEN_DEPTH + 0.35, w: sw - 0.3, h: 1.25 }; };
 
 RS.DELIGHTERS = [
   { id: 'bread', name: 'House-baked bread', prepMin: 90, perCover: 0.45, sat: 4, desc: 'Baked before the shift. Costs a baker 90 minutes and about 45 cents a guest.' },

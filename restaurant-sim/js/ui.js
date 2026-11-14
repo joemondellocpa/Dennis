@@ -7,7 +7,7 @@
   const set = (o, path, v) => { const ks = path.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
 
   let game = RS.newGame();
-  let screen = 'builder', step = 0, sim = null, layout = null, speed = 'normal', paused = false, selTable = null, tab = 'tables', lastResults = null, lastAdvice = null;
+  let screen = 'builder', step = 0, sim = null, layout = null, speed = 'normal', paused = false, selTable = null, selStaff = null, tab = 'tables', lastResults = null, lastAdvice = null;
   const cfg = () => game.cfg;
   RS._debug = () => ({ game, sim, lastResults });
 
@@ -65,7 +65,7 @@
   /* ---------- builder steps ---------- */
   const crowd = () => {
     const a = cfg().atmosphere, A = { light: a.light / 100, noise: a.noise / 100, formality: a.formality / 100, spacing: a.spacing / 100 };
-    const ws = RS.DEMOS.map((d) => { let e = 0; Object.keys(A).forEach((k) => { e += d.likes[k] * (A[k] - 0.5); }); return { d, w: d.base * Math.exp(e * 1.6) }; });
+    const ws = RS.DEMOS.map((d) => ({ d, w: RS.demoWeight(d, cfg(), cfg().room.bar.on) }));
     const tot = ws.reduce((s, x) => s + x.w, 0);
     return ws.sort((x, y) => y.w - x.w).map((x) => '<div class="bar"><span>' + x.d.label + '</span><i><b style="width:' + (x.w / tot * 100 / 0.4).toFixed(0) + '%;background:' + x.d.color + '"></b></i><em>' + Math.round(x.w / tot * 100) + '%</em></div>').join('');
   };
@@ -89,7 +89,7 @@
       slider('atmosphere.formality', 'Dress', 'Come as you are', 'White tablecloth', { lock: true }) +
       slider('atmosphere.spacing', 'Space between tables', 'Elbow to elbow', 'Room to breathe', { lock: true, hint: 'Space is the most expensive thing in the room. Every extra foot is a chair you are not selling.' }) +
       slider('atmosphere.tableSize', 'Table size', 'Compact', 'Generous', { lock: true }) +
-      '</div><div class="panel"><h3>Who this room draws</h3><div id="crowd">' + crowd() + '</div><p class="hint">Each group spends, drinks and lingers differently. You can see them at the tables once service starts.</p></div></div>',
+      '</div><div class="panel"><h3>Who this restaurant draws</h3><div id="crowd">' + crowd() + '</div><p class="hint">Cuisine, price point, ingredients and the room all pull on this. Each group spends, drinks and lingers differently, and you can click their tables during service.</p></div></div>',
     () => {
       const c = cfg(), walls = [['S', 'Front wall'], ['W', 'Left wall'], ['E', 'Right wall']];
       return '<h2>Lay out the room</h2><p class="lede">A rectangle, a kitchen behind the back wall, and as many tables as your spacing allows. Drag tables to move them.</p><div class="grid-room"><div>' +
@@ -169,24 +169,25 @@
   const startNight = () => {
     if (!game.started) { game.started = true; game.debtLeft = cfg().goal.type === 'debt' ? Number(cfg().goal.debt) : 0; }
     sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 };
-    selTable = null; screen = 'service'; paused = false; renderService();
+    selTable = null; selStaff = null; screen = 'service'; paused = false; renderService();
   };
   const renderService = () => {
     $('#app').innerHTML = '<div class="svc"><div class="stage"><div class="canvas-wrap"><canvas id="floor"></canvas></div><div class="legend">' +
-      [['server', 'Server'], ['busser', 'Busser'], ['host', 'Host'], ['bartender', 'Bartender'], ['owner', 'Owner']].map((r) => '<span><i class="sq" style="background:' + RS.ROLE_COLOR[r[0]] + '"></i>' + r[1] + '</span>').join('') +
+      [['server', 'Server'], ['busser', 'Busser'], ['host', 'Host'], ['bartender', 'Bartender'], ['cook', 'Cook'], ['owner', 'Owner']].map((r) => '<span><i class="sq" style="background:' + RS.ROLE_COLOR[r[0]] + '"></i>' + r[1] + '</span>').join('') +
       RS.DEMOS.map((d) => '<span><i class="dot" style="background:' + d.color + '"></i>' + d.label + '</span>').join('') +
       '<span><i class="sq" style="background:#d98b3a"></i>waiting</span><span><i class="sq" style="background:#5fae6e"></i>eating</span><span><i class="sq" style="background:#7b9bd1"></i>finishing</span><span><i class="sq" style="background:#6b5b4d"></i>needs bussing</span></div></div>' +
-      '<aside class="side"><div id="hud"></div><div class="tabs">' + [['tables', 'Table'], ['menu', 'Menu tally'], ['log', 'Floor notes']].map((t) => '<button data-act="tab" data-t="' + t[0] + '" class="' + (tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div><div id="tabbody"></div></aside></div>';
+      '<aside class="side"><div id="hud"></div><div class="tabs">' + [['tables', 'Who is this?'], ['menu', 'Menu tally'], ['log', 'Floor notes']].map((t) => '<button data-act="tab" data-t="' + t[0] + '" class="' + (tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>').join('') + '</div><div id="tabbody"></div></aside></div>';
     updateSide();
   };
   const tableHTML = () => {
-    const t = selTable; if (!t) return '<p class="muted">Click any table to see who is sitting there and what they ordered.</p>';
+    if (selStaff) return staffHTML(selStaff);
+    const t = selTable; if (!t) return '<p class="muted">Click a table to see who is sitting there, why they came and what they ordered. Click anyone on staff, in the dining room or the kitchen, to meet them. Pausing makes them easier to catch.</p>';
     const p = t.party || t.lastParty;
     let h = '<h4>' + (t.bar ? 'Bar seats' : 'Table ' + (t.id + 1)) + ' <small>' + t.seats + ' seats, ' + (t.server ? t.server.role + ' ' + (Number(t.server.id.replace(/\D/g, '')) + 1) : '') + '</small></h4>';
     if (!p) return h + '<p class="muted">Empty so far tonight.</p>';
     const stateTxt = { toTable: 'being seated', seated: 'waiting to order', waitFood: 'waiting on food', eating: 'eating', waitClear: 'finished, plates still down', waitCheck: 'asked for the check', paying: 'paying and lingering', leaving: 'left' };
     h += '<p><i class="dot" style="background:' + p.demo.color + '"></i> <b>' + p.demo.label + '</b>, party of ' + p.size + ', ages ' + p.demo.ages + '<br><span class="muted">' + (t.party ? stateTxt[p.state] || p.state : 'left; table ' + (t.state === 'dirty' ? 'needs bussing' : 'reset')) + '</span></p>';
-    h += '<dl class="kv"><dt>Arrived</dt><dd>' + RS.clock(p.arrivedAt) + '</dd><dt>Waited for table</dt><dd>' + (p.waits.seat || 0).toFixed(0) + ' min</dd>' +
+    h += '<dl class="kv"><dt>Why they came</dt><dd>' + esc(p.reason) + '</dd><dt>Arrived</dt><dd>' + RS.clock(p.arrivedAt) + '</dd><dt>Waited for table</dt><dd>' + (p.waits.seat || 0).toFixed(0) + ' min</dd>' +
       (p.waits.greet != null ? '<dt>Waited for server</dt><dd>' + p.waits.greet.toFixed(1) + ' min</dd>' : '') + (p.waits.main != null ? '<dt>Waited for mains</dt><dd>' + p.waits.main.toFixed(0) + ' min</dd>' : '') +
       (p.sat != null ? '<dt>Left feeling</dt><dd>' + p.sat.toFixed(0) + ' / 100</dd>' : '') + '</dl>';
     if (p.lines.length) {
@@ -194,6 +195,20 @@
       h += '<table class="mini">' + Object.values(agg).map((a) => '<tr><td>' + a.n + ' &times;</td><td>' + esc(a.l.item.name) + (a.l.free ? ' <em>(free)</em>' : '') + '</td><td class="num">' + RS.money(a.sum) + '</td></tr>').join('') + '<tr class="tot"><td></td><td>Check</td><td class="num">' + RS.money(p.check) + '</td></tr></table>';
     } else h += '<p class="muted">Has not ordered yet.</p>';
     return h;
+  };
+  const staffHTML = (a) => {
+    const doing = { order: 'taking an order', food: 'running food', drinks: 'carrying drinks', check: 'dropping a check', clear: 'clearing plates', bus: 'resetting a table', visit: a.role === 'host' ? 'seating a party' : 'checking on a table' };
+    let now = a.role === 'cook' ? (a.station && sim.stations[a.station].active ? 'cooking, ' + sim.stations[a.station].active + ' on the ' + RS.STATION_LABEL[a.station].split(' ')[0].toLowerCase() : 'waiting for tickets') : (a.cur ? doing[a.cur.type] + (a.cur.table ? (a.cur.table.bar ? ' at the bar' : ', table ' + (a.cur.table.id + 1)) : '') : (a.role === 'bartender' ? 'behind the bar' : 'standing by'));
+    let h = '<h4><i class="sq" style="background:' + RS.ROLE_COLOR[a.role] + '"></i>' + esc(a.name) + ' <small>' + esc(a.title) + '</small></h4><p>' + esc(a.bio) + '<br><span class="muted">Right now: ' + now + '</span></p><dl class="kv">';
+    if (a.years != null) h += '<dt>In the business</dt><dd>' + a.years + (a.years === 1 ? ' year' : ' years') + '</dd>';
+    if (a.role === 'cook') h += '<dt>Plates out tonight</dt><dd>' + a.plates + '</dd>';
+    else {
+      h += '<dt>Busy</dt><dd>' + RS.pct(sim.t ? a.busy / sim.t : 0) + ' of the night</dd><dt>Trips made</dt><dd>' + a.done + '</dd>';
+      if (a.role === 'server' || a.role === 'bartender') h += '<dt>Tables finished</dt><dd>' + a.tables + '</dd><dt>Sales rung</dt><dd>' + RS.money(a.sales) + '</dd><dt>Tips so far</dt><dd>' + RS.money(a.tips) + '</dd>';
+      if (a.role === 'host') h += '<dt>Parties seated</dt><dd>' + a.tables + '</dd>';
+      if (a.role === 'server') { const sec = sim.tables.filter((t) => t.server === a && !t.bar).map((t) => t.id + 1); h += '<dt>Section</dt><dd>tables ' + sec.join(', ') + '</dd>'; }
+    }
+    return h + '</dl>';
   };
   const tallyHTML = () => {
     const c = cfg(), rows = RS.activeItems(c).map((i) => ({ i, s: sim.stats.items[i.id] }));
@@ -205,7 +220,7 @@
     const s = sim.stats, waiting = sim.parties.filter((p) => p.state === 'waiting').reduce((a, p) => a + p.size, 0), seated = sim.parties.filter((p) => p.table && p.state !== 'leaving').reduce((a, p) => a + p.size, 0);
     const sat = s.sats.length ? s.sats.reduce((a, b) => a + b, 0) / s.sats.length : 0;
     $('#hud').innerHTML = '<div class="clock"><span>' + RS.DAYS[game.day % 7] + ', night ' + (game.day + 1) + '</span><b>' + RS.clock(sim.t) + '</b></div>' +
-      '<div class="speed">' + [['pause', paused ? 'Resume' : 'Pause'], ['normal', '5 min dinner'], ['fast', '3 min dinner'], ['week', 'Week in a minute']].map((x) => '<button data-act="speed" data-s="' + x[0] + '" class="' + ((x[0] === 'pause' ? paused : (!paused && speed === x[0])) ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>' +
+      '<div class="speed">' + [['pause', '&#10074;&#10074;', 'Pause'], ['normal', '&gt;', 'One dinner in about 5 minutes'], ['fast', '&gt;&gt;', 'One dinner in about 3 minutes'], ['week', '&gt;&gt;&gt;', 'A whole week in about a minute, night after night']].map((x) => '<button title="' + x[2] + '" data-act="speed" data-s="' + x[0] + '" class="' + ((x[0] === 'pause' ? paused : (!paused && speed === x[0])) ? 'on' : '') + '">' + x[1] + '</button>').join('') + '</div>' +
       '<div class="kpis"><div><small>Sales</small><b>' + RS.money(s.revenue) + '</b></div><div><small>Guests served</small><b>' + s.covers + '</b></div><div><small>In the room</small><b>' + seated + ' / ' + RS.seatCount(cfg()) + '</b></div>' +
       '<div><small>Waiting at door</small><b class="' + (waiting > 6 ? 'bad' : '') + '">' + waiting + '</b></div><div><small>Walked out</small><b class="' + (s.walkouts ? 'bad' : '') + '">' + (s.walkouts + s.turnedAway) + '</b></div><div><small>Mood so far</small><b>' + (sat ? sat.toFixed(0) : '&ndash;') + '</b></div></div>';
     $('#tabbody').innerHTML = tab === 'tables' ? tableHTML() : (tab === 'menu' ? tallyHTML() : '<ul class="log">' + (sim.log.length ? sim.log.map((l) => '<li class="' + l.kind + '"><time>' + RS.clock(l.t) + '</time>' + esc(l.msg) + '</li>').join('') : '<li class="muted">Quiet so far.</li>') + '</ul>');
@@ -218,7 +233,7 @@
     if (game.debtLeft > 0) game.debtLeft = Math.max(0, game.debtLeft - Math.max(0, r.profit));
     const weekEnd = game.day % 7 === 6;
     game.day++;
-    if (speed === 'week' && !weekEnd) { sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 }; selTable = null; return; }
+    if (speed === 'week' && !weekEnd) { sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 }; selTable = null; selStaff = null; return; }
     if (speed === 'week') speed = 'normal';
     sim = null; screen = 'review'; renderReview();
   };
@@ -313,7 +328,7 @@
     return { t, p };
   };
   document.addEventListener('pointerdown', (e) => {
-    if (e.target.id === 'floor') { selTable = hitTable(e.target, e).t || null; tab = 'tables'; renderService(); }
+    if (e.target.id === 'floor') { const h = hitTable(e.target, e); selStaff = sim ? sim.agents.concat(sim.cookList).filter((a) => Math.hypot(a.x - h.p.x, a.y - h.p.y) < 0.55).sort((a, b) => Math.hypot(a.x - h.p.x, a.y - h.p.y) - Math.hypot(b.x - h.p.x, b.y - h.p.y))[0] || null : null; selTable = selStaff ? null : (h.t || null); tab = 'tables'; renderService(); }
     else if (e.target.id === 'plan') { const h = hitTable(e.target, e); if (h.t && !h.t.bar) { drag = { t: h.t, dx: h.p.x - h.t.x, dy: h.p.y - h.t.y }; e.target.setPointerCapture(e.pointerId); } }
   });
   document.addEventListener('pointermove', (e) => {
@@ -338,7 +353,7 @@
         if (sim && sim.done) endNight();
       }
       const cv = $('#floor');
-      if (cv && sim) { RS.draw(cv, cfg(), layout, sim, selTable); if (now - sideAt > 300) { sideAt = now; updateSide(); } }
+      if (cv && sim) { RS.draw(cv, cfg(), layout, sim, selTable, selStaff); if (now - sideAt > 300) { sideAt = now; updateSide(); } }
     }
     requestAnimationFrame(frame);
   };
