@@ -41,7 +41,7 @@
     const check = mix.reduce((s, m) => s + m[1] * avg(m[0], P), 0), cost = mix.reduce((s, m) => s + m[1] * avg(m[0], C), 0);
     const wm = RS.lerp(0.9, 1.35, c.staff.experience / 100), area = c.room.w * c.room.h, seats = RS.seatCount(c);
     const prep = menu.reduce((x, i) => x + (i.prepMin || 0), 0) + RS.DELIGHTERS.reduce((x, d) => x + (c.delighters[d.id] ? d.prepMin : 0), 0);
-    const labor = (c.staff.servers * 77 * wm + c.staff.bussers * 112 * wm + c.staff.hosts * 110.5 * wm + (c.room.bar.on ? c.staff.bartenders : 0) * 97.5 * wm + c.staff.cooks * 200 * wm + (seats > 90 ? 272 : 136) + prep / 60 * 22 + (c.owner.presence > 60 ? 0 : 260)) * 1.16;
+    const labor = (c.staff.servers * 77 * wm + c.staff.bussers * 112 * wm + c.staff.hosts * 110.5 * wm + (c.room.bar.on ? c.staff.bartenders : 0) * 97.5 * wm + c.staff.cooks * 200 * wm + (seats > 90 ? 272 : 136) + prep / 60 * 22 + Object.values(RS.ownerLabor(c)).reduce((x, y) => x + y, 0)) * 1.16;
     const occ = area * RS.lerp(1.0, 3.8, c.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[c.room.line] + 40 + 0.3 * area + 160;
     const ingr = RS.ingredientCount(c), fixed = labor + occ + ingr * 2 * RS.costMult(c);
     const per = check - cost - check * 0.063 - (0.5 + 1.2 * c.atmosphere.formality / 100);
@@ -113,9 +113,12 @@
         '<div class="grid2">' + stepper('staff.servers', 'Servers', { min: 1, note: 'suggested ' + sg.servers }) + stepper('staff.bussers', 'Bussers', { note: 'suggested ' + sg.bussers }) + stepper('staff.hosts', 'Hosts', { max: 3, note: 'suggested 1' }) +
         stepper('staff.cooks', 'Line cooks', { min: 1, note: 'suggested ' + sg.cooks }) + (cfg().room.bar.on ? stepper('staff.bartenders', 'Bartenders', { max: 4, note: 'suggested 1' }) : '') + '</div>' +
         '</div><div class="panel"><h3>The owner</h3>' +
-        slider('owner.presence', 'Where you are at 8 pm', 'Home, checking the numbers', 'On the floor, touching tables', { hint: 'On the floor you replace the manager and guests notice. Off the floor you pay for one.' }) +
-        slider('owner.detail', 'How much you want to see', 'Three things to fix', 'Every number', { hint: 'Sets how much the end-of-night review shows you.' }) +
-        slider('owner.style', 'How you decide', 'Tell me what to do', 'Show me and I will decide') + '</div></div>';
+        select('owner.role', 'Where you are at 8 pm', RS.OWNER_ROLES.map((o) => [o.id, o.label])) + '<p class="hint" style="margin:-4px 0 14px">' + (RS.OWNER_ROLES.find((o) => o.id === cfg().owner.role) || {}).desc + '</p>' +
+        '<p class="hint" style="margin-bottom:10px">What you are good at. ' + RS.OWNER_POINTS + ' points to spread across three skills. A skill counts in full only in a job that uses it. <b id="pts"></b></p>' +
+        slider('owner.cooking', 'Cooking', 'Can follow a recipe', 'Could run any kitchen') +
+        slider('owner.business', 'Business', 'Shoebox of receipts', 'Knows every number') +
+        slider('owner.vibe', 'Vibe-making', 'Awkward at tables', 'The reason people come back') +
+        slider('owner.detail', 'How much you want to see', 'Three things to fix', 'Every number', { hint: 'Sets how much the end-of-night review shows you.' }) + '</div></div>';
     },
     () => {
       const c = cfg(), cui = RS.cuisine(c); RS.ensureMenu(c);
@@ -155,7 +158,9 @@
       '<section class="main">' + stepHTML[step]() + '<div class="navrow">' + (step > 0 ? '<button class="ghost" data-act="goto" data-i="' + (step - 1) + '">Back</button>' : '<span></span>') + (step < STEPS.length - 1 ? '<button class="primary" data-act="goto" data-i="' + (step + 1) + '">Next: ' + STEPS[step + 1] + '</button>' : '') + '</div></section>' +
       '<aside class="aside" id="aside">' + aside() + '</aside></div>';
     if (step === 2) drawPlan();
+    ownerPts();
   };
+  const ownerPts = () => { const el = $('#pts'), o = cfg().owner; if (el) el.textContent = (RS.OWNER_POINTS - o.cooking - o.business - o.vibe) + ' left.'; };
   const drawPlan = () => {
     const cv = $('#plan'); if (!cv) return;
     layout = RS.layoutTables(cfg());
@@ -198,11 +203,11 @@
   };
   const staffHTML = (a) => {
     const doing = { order: 'taking an order', food: 'running food', drinks: 'carrying drinks', check: 'dropping a check', clear: 'clearing plates', bus: 'resetting a table', visit: a.role === 'host' ? 'seating a party' : 'checking on a table' };
-    let now = a.role === 'cook' ? (a.station && sim.stations[a.station].active ? 'cooking, ' + sim.stations[a.station].active + ' on the ' + RS.STATION_LABEL[a.station].split(' ')[0].toLowerCase() : 'waiting for tickets') : (a.cur ? doing[a.cur.type] + (a.cur.table ? (a.cur.table.bar ? ' at the bar' : ', table ' + (a.cur.table.id + 1)) : '') : (a.role === 'bartender' ? 'behind the bar' : 'standing by'));
+    let now = a.id === 'owner' && a.plates !== undefined ? 'at the pass, checking every plate' : a.role === 'cook' ? (a.station && sim.stations[a.station].active ? 'cooking, ' + sim.stations[a.station].active + ' on the ' + RS.STATION_LABEL[a.station].split(' ')[0].toLowerCase() : 'waiting for tickets') : (a.cur ? doing[a.cur.type] + (a.cur.table ? (a.cur.table.bar ? ' at the bar' : ', table ' + (a.cur.table.id + 1)) : '') : (a.role === 'bartender' ? 'behind the bar' : 'standing by'));
     let h = '<h4><i class="sq" style="background:' + RS.ROLE_COLOR[a.role] + '"></i>' + esc(a.name) + ' <small>' + esc(a.title) + '</small></h4><p>' + esc(a.bio) + '<br><span class="muted">Right now: ' + now + '</span></p><dl class="kv">';
     if (a.years != null) h += '<dt>In the business</dt><dd>' + a.years + (a.years === 1 ? ' year' : ' years') + '</dd>';
-    if (a.role === 'cook') h += '<dt>Plates out tonight</dt><dd>' + a.plates + '</dd>';
-    else {
+    if (a.plates !== undefined) h += '<dt>Plates out tonight</dt><dd>' + a.plates + '</dd>';
+    else if (a.busy !== undefined) {
       h += '<dt>Busy</dt><dd>' + RS.pct(sim.t ? a.busy / sim.t : 0) + ' of the night</dd><dt>Trips made</dt><dd>' + a.done + '</dd>';
       if (a.role === 'server' || a.role === 'bartender') h += '<dt>Tables finished</dt><dd>' + a.tables + '</dd><dt>Sales rung</dt><dd>' + RS.money(a.sales) + '</dd><dt>Tips so far</dt><dd>' + RS.money(a.tips) + '</dd>';
       if (a.role === 'host') h += '<dt>Parties seated</dt><dd>' + a.tables + '</dd>';
@@ -272,7 +277,7 @@
       (a.good.length ? '<div class="panel"><h3>What worked</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
       '<div><div class="panel"><h3>Tonight\'s books</h3><table class="pl">' + line('Food', r.foodRev) + line('Drinks', r.bevRev) + line('Sales', r.revenue, 'tot') +
       line('Ingredients on the plate', -r.cogs, '', r.revenue) + line('Spoilage and overproduction', -r.waste, '', r.revenue) + (r.delight ? line('Delighters and comps', -r.delight, '', r.revenue) : '') +
-      line('Labor', -r.laborTotal, '', r.revenue) + sub(r.labor) + line('Rent and overhead', -r.occTotal, '', r.revenue) + sub(r.occupancy) + line('Card fees', -r.card, '', r.revenue) + line('Profit', r.profit, 'tot ' + (r.profit >= 0 ? 'good' : 'bad'), r.revenue) + '</table>' +
+      line('Labor', -r.laborTotal, '', r.revenue) + sub(r.labor) + line('Rent and overhead', -r.occTotal, '', r.revenue) + sub(r.occupancy) + line('Card fees', -r.card, '', r.revenue) + (r.ownerSave > 1 ? line('Saved by the owner\'s desk work', r.ownerSave, '', r.revenue) : '') + line('Profit', r.profit, 'tot ' + (r.profit >= 0 ? 'good' : 'bad'), r.revenue) + '</table>' +
       '<p class="hint">Prime cost (food plus labor) ' + RS.pct(r.primeCost) + '. Staff took home ' + RS.money(r.tips) + ' in tips.' + (r.discounts > 1 ? ' Deals and comps gave away ' + RS.money(r.discounts) + '.' : '') + '</p></div>' +
       (full ? '<div class="panel"><h3>Service</h3><dl class="kv"><dt>Wait for a table</dt><dd>' + r.seatWait.toFixed(1) + ' min</dd><dt>Wait for a server</dt><dd>' + r.greetWait.toFixed(1) + ' min</dd><dt>Mains ticket time</dt><dd>' + r.mainTicket.toFixed(1) + ' min</dd><dt>Late tickets</dt><dd>' + r.lateTickets + ' of ' + r.tickets + '</dd><dt>Servers on task</dt><dd>' + RS.pct(r.serverUtil) + '</dd><dt>Chairs filled at seated tables</dt><dd>' + RS.pct(r.seatFill) + '</dd><dt>Inventory lines</dt><dd>' + r.ingredients + '</dd></dl>' +
         '<h4>Who came</h4>' + RS.DEMOS.filter((d) => r.demos[d.id]).sort((x, y) => r.demos[y.id] - r.demos[x.id]).map((d) => '<div class="bar"><span>' + d.label + '</span><i><b style="width:' + (r.demos[d.id] / r.demand * 100 / 0.5).toFixed(0) + '%;background:' + d.color + '"></b></i><em>' + r.demos[d.id] + '</em></div>').join('') + '</div>' : '') + '</div></div>' +
@@ -285,7 +290,8 @@
   const refreshLive = () => { const a = $('#aside'); if (a) a.innerHTML = aside(); const cr = $('#crowd'); if (cr) cr.innerHTML = crowd(); if (step === 2) drawPlan(); };
   document.addEventListener('input', (e) => {
     const el = e.target, path = el.dataset.path; if (!path || screen !== 'builder') return;
-    if (el.type === 'range') { set(cfg(), path, Number(el.value)); const v = $('[data-val="' + path + '"]'); if (v && path.startsWith('room.')) v.textContent = path.endsWith('pos') ? '' : el.value + ' m'; if (v && path === 'menu.priceAdj') v.textContent = (el.value > 0 ? '+' : '') + el.value + '%'; if (path.startsWith('room.') || path.startsWith('atmosphere.')) cfg().manualLayout = null; }
+    if (el.type === 'range') { set(cfg(), path, Number(el.value));
+      if (/^owner\.(cooking|business|vibe)$/.test(path)) { const o = cfg().owner, over = o.cooking + o.business + o.vibe - RS.OWNER_POINTS; if (over > 0) { set(cfg(), path, Number(el.value) - over); el.value = get(cfg(), path); } ownerPts(); } const v = $('[data-val="' + path + '"]'); if (v && path.startsWith('room.')) v.textContent = path.endsWith('pos') ? '' : el.value + ' m'; if (v && path === 'menu.priceAdj') v.textContent = (el.value > 0 ? '+' : '') + el.value + '%'; if (path.startsWith('room.') || path.startsWith('atmosphere.')) cfg().manualLayout = null; }
     else if (el.type === 'text') set(cfg(), path, el.value);
     else return;
     refreshLive();
@@ -317,7 +323,7 @@
     else if (act === 'week') { speed = 'week'; startNight(); }
     else if (act === 'tweak') { screen = 'builder'; step = 4; renderBuilder(); window.scrollTo(0, 0); }
     else if (act === 'apply') { const n = lastAdvice.notes[Number(el.dataset.i)]; if (n && n.action && !n.applied) { n.action.apply(c); n.applied = true; el.textContent = 'Done for tomorrow'; el.disabled = true; el.classList.add('applied'); } }
-    else if (act === 'restart') { if (confirm('Start over with a new restaurant?')) { game = RS.newGame(); screen = 'builder'; step = 0; sim = null; renderBuilder(); } }
+    else if (act === 'restart') { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; game = RS.newGame(); RS.applyPreset(game.cfg, 'italian'); game.cfg.name = 'Your Restaurant'; screen = 'builder'; step = 0; sim = null; renderBuilder(); } else { el.dataset.armed = '1'; el.textContent = 'Click again to wipe this restaurant'; setTimeout(() => { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; } }, 4000); } }
   });
 
   // Canvas: pick a table during service, drag tables in the layout editor.

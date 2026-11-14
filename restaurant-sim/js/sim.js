@@ -13,7 +13,7 @@
     const alcFocus = cfg.menu.alcoholFocus / 100, priceT = cfg.priceTier / 100 + cfg.menu.priceAdj / 100, sourcing = cfg.sourcing / 100;
     const quality = A.formality * 0.3 + sourcing * 0.35 + exp * 0.35;
     const overprice = Math.max(0, priceT - quality - 0.12);
-    const dow = game.day % 7;
+    const dow = game.day % 7, OW = RS.ownerEff(cfg);
     const D = cfg.delighters || {};
     const menu = RS.activeItems(cfg);
     const byCourse = (c) => menu.filter((i) => i.course === c);
@@ -50,7 +50,10 @@
     for (let i = 0; i < cfg.staff.hosts; i++) hosts.push(mk('host', i, { x: G.host.x + i * 0.6, y: G.host.y }));
     if (G.bar) for (let i = 0; i < cfg.staff.bartenders; i++) tenders.push(mk('bartender', i, { x: G.bar.tender.x + (G.bar.horiz ? i * 0.8 : 0), y: G.bar.tender.y + (G.bar.horiz ? 0 : i * 0.8) }));
     let owner = null;
-    if (cfg.owner.presence > 60) { owner = mk('owner', 0, inRoom({ x: G.host.x + 1.2, y: G.host.y })); owner.nextVisit = 20; }
+    if (OW.role === 'floor') { owner = mk('owner', 0, inRoom({ x: G.host.x + 1.2, y: G.host.y })); owner.nextVisit = 12; }
+    if (OW.role === 'greeter') hosts.push(mk('owner', 0, inRoom({ x: G.host.x - 0.8, y: G.host.y })));
+    if (OW.role === 'chef' || OW.role === 'kitchen') sim.cookList.push(Object.assign({ id: 'owner', role: 'owner', plates: 0, x: RS.clamp(G.kitchenDoor.x - 1.2, 0.5, cfg.room.w - 0.5), y: -0.75 }, RS.persona('owner', 0, cfg)));
+    if (OW.role === 'kitchen') sim.cooks += 0.5 + OW.cook;
     sim.agents = [].concat(servers, bussers, hosts, tenders, owner ? [owner] : []);
     const hostFreeAt = hosts.length ? hosts.map(() => 0) : [0];
     const seatTime = hosts.length ? 1.2 : 3.5;
@@ -101,7 +104,7 @@
     const seats = RS.seatCount(cfg);
     const deals = cfg.plays.filter((p) => p.type === 'discount' || p.type === 'bogo').length;
     const valueMult = 1 - 0.6 * overprice + 0.15 * Math.max(0, quality - priceT - 0.1);
-    const target = (72 + 0.85 * seats) * RS.DOW_DEMAND[dow] * (0.55 + 0.9 * game.reputation) * valueMult * (1 + 0.03 * deals) * rnd.range(0.92, 1.08);
+    const target = (72 + 0.85 * seats) * RS.DOW_DEMAND[dow] * (0.55 + 0.9 * game.reputation) * valueMult * (1 + 0.03 * deals) * (1 + 0.08 * OW.biz) * rnd.range(0.92, 1.08);
     st.demandCovers = Math.round(target);
     const maxTable = Math.max.apply(null, sim.tables.map((t) => t.seats).concat([0]));
     const arrivals = []; let planned = 0, pid = 0;
@@ -199,7 +202,7 @@
             const batch = x.it.prep === 'batch', sname = stationOf(x.it), sn = sim.stations[sname];
             if (sim.cookActive >= cookCap) { st.cookWait += dt; if (sn && !batch) sn.queued++; }
             else if (batch || !sn) { x.state = 'cooking'; x.remain = Math.max(1, x.it.cookMin) + 0.8; x.sn = null; sim.cookActive++; credit(null); }
-            else if (sn.active < sn.cap) { x.state = 'cooking'; x.remain = (x.it.cookMin * rnd.range(0.85, 1.25) + 1) * (1.15 - 0.3 * exp); x.sn = sn; x.sname = sname; sn.active++; sim.cookActive++; credit(sname); }
+            else if (sn.active < sn.cap) { x.state = 'cooking'; x.remain = (x.it.cookMin * rnd.range(0.85, 1.25) + 1) * (1.15 - 0.3 * exp) * (OW.role === 'kitchen' ? 1 - 0.12 * OW.cook : 1); x.sn = sn; x.sname = sname; sn.active++; sim.cookActive++; credit(sname); }
             else { st.stationWait[sname] += dt; sn.queued++; }
           }
           if (x.state === 'cooking') {
@@ -273,7 +276,11 @@
       s += (exp - 0.5) * 8 + (sourcing - 0.5) * 5;
       s -= overprice * 28;
       s -= Math.abs(style - A.formality) * 8;
-      if (p.ownerVisited) s += 3;
+      if (p.ownerVisited) s += 2 + 5 * OW.vibeRaw;
+      if (OW.role === 'greeter') s += 1 + 4 * OW.vibeRaw;
+      if (OW.role === 'chef') s += (OW.cooking - 0.45) * 12;   // a chef-owner who cannot cook drags the food down
+      if (OW.role === 'kitchen') s += OW.cook * 2;
+      if (OW.role === 'handsoff') s -= 2;
       RS.DELIGHTERS.forEach((x) => {
         if (!D[x.id]) return;
         s += x.sat + (x.fancyBonus || 0) * A.formality;
@@ -302,7 +309,7 @@
       st.arrivals += a.size;
       if (a.size > maxTable + (maxTable >= 4 ? 1 : 0)) { st.turnedAway += a.size; say('Turned away a party of ' + a.size + ': no table that big', 'bad'); return; }
       const p = { id: a.id, demo: a.demo, size: a.size, reason: RS.visitReason(a.demo, game, rnd), x: G.entrance.x, y: G.entrance.y, state: 'walkin', arrivedAt: sim.t, lines: [], check: 0, drinkers: [], waits: {}, eatUntil: 0,
-        patience: (18 + 18 * rnd()) * a.demo.patience * (G.bar ? 1.5 : 1), barOk: a.size <= 2 && (a.demo.id === 'solo' || rnd() < 0.3) };
+        patience: (18 + 18 * rnd()) * a.demo.patience * (G.bar ? 1.5 : 1) * (OW.role === 'greeter' ? 1 + 0.5 * OW.vibeRaw : 1), barOk: a.size <= 2 && (a.demo.id === 'solo' || rnd() < 0.3) };
       sim.parties.push(p);
       st.demos[a.demo.id] = (st.demos[a.demo.id] || 0) + a.size;
       const q = sim.parties.filter((x) => x.state === 'waiting' || x.state === 'walkin').length - 1;
@@ -374,13 +381,15 @@
       const labor = {
         'Servers': cfg.staff.servers * 7 * 11 * wm, 'Bussers and runners': cfg.staff.bussers * 7 * 16 * wm, 'Host': cfg.staff.hosts * 6.5 * 17 * wm,
         'Bartender': (G.bar ? cfg.staff.bartenders : 0) * 7.5 * 13 * wm, 'Line cooks': cfg.staff.cooks * 8 * 25 * wm,
-        'Dishwasher': (seats > 90 ? 2 : 1) * 8 * 17, 'Pre-shift prep': prepMin / 60 * 22, 'Floor manager': cfg.owner.presence > 60 ? 0 : 260
+        'Dishwasher': (seats > 90 ? 2 : 1) * 8 * 17, 'Pre-shift prep': prepMin / 60 * 22
       };
+      Object.assign(labor, RS.ownerLabor(cfg));
       labor['Payroll tax and benefits'] = Object.values(labor).reduce((x, y) => x + y, 0) * 0.16;
       const laborTotal = Object.values(labor).reduce((x, y) => x + y, 0);
       const ingr = RS.ingredientCount(cfg);
       const batchCogs = menu.filter((i) => i.prep === 'batch').reduce((x, i) => x + s.items[i.id].cost, 0);
-      const waste = ingr * 2.0 * RS.costMult(cfg) + 0.12 * batchCogs;
+      const waste = (ingr * 2.0 * RS.costMult(cfg) + 0.12 * batchCogs) * (1 - 0.3 * OW.cook);
+      const ownerSave = (s.cogs * 0.05 + laborTotal * 0.04) * OW.biz;
       const delight = RS.DELIGHTERS.reduce((x, d) => x + (D[d.id] ? d.perCover * s.covers : 0), 0) + s.comps;
       const occupancy = {
         'Rent': area * RS.lerp(1.0, 3.8, cfg.priceTier / 100) + { compact: 40, standard: 70, large: 120 }[cfg.room.line],
@@ -388,14 +397,14 @@
       };
       const occTotal = Object.values(occupancy).reduce((x, y) => x + y, 0);
       const card = s.revenue * 0.028;
-      const profit = s.revenue - s.cogs - waste - delight - laborTotal - occTotal - card;
+      const profit = s.revenue - s.cogs - waste - delight - laborTotal - occTotal - card + ownerSave;
       const avgSat = avg(s.sats);
       const allSats = s.sats.concat(new Array(s.walkoutParties).fill(45));
       const shift = sim.shift || sim.t;
       const diningTables = sim.tables.filter((t) => !t.bar);
       return {
         day: game.day, dow, dayName: RS.DAYS[dow], revenue: s.revenue, foodRev: s.foodRev, bevRev: s.bevRev, discounts: s.discounts,
-        cogs: s.cogs, waste, delight, labor, laborTotal, occupancy, occTotal, card, profit, margin: s.revenue ? profit / s.revenue : 0,
+        cogs: s.cogs, waste, delight, ownerSave, labor, laborTotal, occupancy, occTotal, card, profit, margin: s.revenue ? profit / s.revenue : 0,
         primeCost: s.revenue ? (s.cogs + waste + laborTotal) / s.revenue : 0, foodCostPct: s.revenue ? (s.cogs + waste) / s.revenue : 0, laborPct: s.revenue ? laborTotal / s.revenue : 0,
         covers: s.covers, parties: s.partiesSeated, demand: s.arrivals, walkouts: s.walkouts, turnedAway: s.turnedAway,
         avgCheck: s.covers ? s.revenue / s.covers : 0, tips: s.tips,

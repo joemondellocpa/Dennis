@@ -110,6 +110,17 @@
     if (!cfg.delighters.memory && ((r.demos.solo || 0) + (r.demos.celebration || 0)) > r.demand * 0.18) add({ tag: 'Loyalty', value: 20, title: 'Brief the team on who is coming', body: 'Regulars and celebrations were ' + RS.pct(((r.demos.solo || 0) + (r.demos.celebration || 0)) / r.demand) + ' of tonight. Fifteen minutes before doors with the guest notes costs ' + RS.money(5.5) + ' and those tables notice.',
       action: { label: 'Add the pre-shift briefing', apply: (c) => { c.delighters.memory = true; } } });
 
+    // The owner in the wrong job.
+    const o = cfg.owner, role = RS.OWNER_ROLES.find((x) => x.id === o.role), best = ['cooking', 'business', 'vibe'].sort((a, b) => o[b] - o[a])[0];
+    const fit = { cooking: 'chef', business: 'office', vibe: 'floor' }, word = { cooking: 'cooking', business: 'business sense', vibe: 'way with guests' };
+    if (role && role.id !== 'handsoff' && role.uses !== best && o[best] - (role.uses ? o[role.uses] : 0) >= 20) {
+      const to = RS.OWNER_ROLES.find((x) => x.id === fit[best]);
+      add({ tag: 'Owner', value: 150, title: 'Your best skill is not in the room', body: 'Your strongest suit is your ' + word[best] + ', and tonight you were ' + role.label.toLowerCase() + ', which barely uses it. ' + to.label + ' puts it to work. The job you leave has to be paid for, so check the labor line after you switch.',
+        action: { label: 'Move to: ' + to.label.toLowerCase(), apply: (c) => { c.owner.role = to.id; } } });
+    }
+    if (role && role.id === 'chef' && o.cooking < 45) add({ tag: 'Owner', value: 120, title: 'The food is not helping', body: 'You are head chef with modest cooking skill, and guests can taste it. A hired chef costs ' + RS.money(280 * 1.16) + ' a night and would cook better than you do.',
+      action: { label: 'Hire a chef, work the room', apply: (c) => { c.owner.role = 'floor'; } } });
+
     // What worked.
     const hero = food.filter((x) => x.qty >= 5).sort((a, b) => b.cm * b.qty - a.cm * a.qty)[0];
     if (hero) good.push(hero.it.name + ' carried the night: ' + hero.qty + ' sold, ' + RS.money(hero.cm * hero.qty) + ' in contribution.');

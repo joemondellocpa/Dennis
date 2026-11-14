@@ -96,6 +96,29 @@ RS.visitReason = (demo, game, rnd) => {
   return rnd.pick(RS.REASONS[demo.id]);
 };
 
+/* Where the owner spends the night, and what they are good at. A skill counts in full only in a job that uses it. */
+RS.OWNER_ROLES = [
+  { id: 'floor', label: 'Working the room', uses: 'vibe', desc: 'You run the floor and stop at tables. No floor manager on payroll. Uses vibe-making.', bio: 'Moving through the dining room, stopping at tables.' },
+  { id: 'greeter', label: 'At the door', uses: 'vibe', desc: 'You greet and seat. Guests wait more patiently and feel known. No floor manager on payroll. Uses vibe-making.', bio: 'At the host stand, greeting every party by name where possible.' },
+  { id: 'chef', label: 'Head chef', uses: 'cooking', desc: 'Your food, your name on it. No head chef salary. The plates are as good as your cooking, for better or worse.', bio: 'Running the kitchen. Every plate goes past them.' },
+  { id: 'kitchen', label: 'On the line', uses: 'cooking', desc: 'An extra pair of hands in the kitchen. Tickets move faster. You still pay a chef and a manager.', bio: 'On the line, jumping onto whichever station is buried.' },
+  { id: 'office', label: 'In the office', uses: 'business', desc: 'Purchasing, scheduling, marketing. Lower costs and a fuller book. You pay a chef and a manager to run service.', bio: 'In the back office with the invoices.' },
+  { id: 'handsoff', label: 'Completely hands off', uses: null, desc: 'You own it and someone else runs it. Add a general manager to the chef and floor manager. None of your skills reach the room.', bio: 'Not in the building.' }
+];
+RS.OWNER_POINTS = 180;
+RS.ownerEff = (cfg) => {
+  const o = cfg.owner, role = RS.OWNER_ROLES.find((x) => x.id === o.role) || RS.OWNER_ROLES[0];
+  const f = (k) => (o[k] / 100) * (role.id === 'handsoff' ? 0 : (role.uses === k ? 1 : 0.2));
+  return { role: role.id, cook: f('cooking'), biz: f('business'), vibe: f('vibe'), cooking: o.cooking / 100, vibeRaw: o.vibe / 100 };
+};
+RS.ownerLabor = (cfg) => {
+  const r = cfg.owner.role, out = {};
+  if (r !== 'floor' && r !== 'greeter') out['Floor manager'] = 220;
+  if (r !== 'chef') out['Head chef'] = 280;
+  if (r === 'handsoff') out['General manager'] = 200;
+  return out;
+};
+
 /* The people on the schedule. Stable from night to night. */
 const FIRST = ['Maya', 'Luis', 'Priya', 'Dante', 'Sofia', 'Marcus', 'Elena', 'Tomas', 'Aisha', 'Ben', 'Carmen', 'Jun', 'Nadia', 'Theo', 'Rosa', 'Kwame', 'Ines', 'Viktor', 'Lena', 'Omar', 'Grace', 'Hiro', 'Paloma', 'Dev'];
 const LAST = 'ABCDGHJKLMNOPRSTVW';
@@ -111,7 +134,7 @@ RS.persona = (role, i, cfg, extra) => {
   const r = RS.rng((role.charCodeAt(0) * 131 + role.length * 17 + i * 977 + cfg.cuisine.length * 53) >>> 0);
   r(); r();
   const exp = cfg.staff.experience / 100, style = cfg.staff.style / 100;
-  if (role === 'owner') return { name: 'The owner', title: 'Owner', years: null, bio: BIO.owner[0] };
+  if (role === 'owner') { const o = RS.OWNER_ROLES.find((x) => x.id === cfg.owner.role) || RS.OWNER_ROLES[0]; return { name: 'The owner', title: 'Owner, ' + o.label.toLowerCase(), years: null, bio: o.bio }; }
   const years = Math.max(0.5, Math.round(RS.lerp(0.6, 13, exp) * r.range(0.5, 1.6) * 2) / 2);
   const name = FIRST[Math.floor(r() * FIRST.length + i * 5) % FIRST.length] + ' ' + LAST[Math.floor(r() * LAST.length)] + '.';
   const title = { server: 'Server', busser: 'Busser and food runner', host: 'Host', bartender: 'Bartender', cook: (extra && extra.lead ? 'Sous chef' : 'Line cook') + (extra && extra.station ? ', ' + RS.STATION_LABEL[extra.station].toLowerCase() : '') }[role];
@@ -154,7 +177,7 @@ RS.defaultConfig = () => ({
   manualLayout: null,     // {tableIndex: {x,y}} once the player drags
   diner: { touch: 55, pace: 50 },
   staff: { style: 45, experience: 55, servers: 4, bussers: 2, hosts: 1, cooks: 4, bartenders: 1 },
-  owner: { presence: 40, detail: 70, style: 50 },
+  owner: { role: 'floor', cooking: 50, business: 50, vibe: 50, detail: 70 },
   menu: { enabled: null, alcoholFocus: 55, priceAdj: 0 },
   plays: [],              // {type:'push'|'discount'|'bogo'|'special', itemId, pct}
   delighters: {},
