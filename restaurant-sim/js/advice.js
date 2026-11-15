@@ -216,7 +216,35 @@
     out.forEach((n) => { n.actions = (n.actions || (n.action ? [n.action] : [])).filter(Boolean); });
     out.sort((a, b) => b.value - a.value);
     const n = cfg.owner.detail < 35 ? 3 : (cfg.owner.detail < 70 ? 6 : 99);
-    return { notes: out.slice(0, n), hidden: Math.max(0, out.length - n), good, rows };
+    return { notes: out.slice(0, n), hidden: Math.max(0, out.length - n), good, rows, all: out };
+  };
+
+  /* Several nights rolled into one set of books, in the same shape as a single night's results. */
+  RS.weekResults = (nights) => {
+    const last = nights[nights.length - 1], W = { isWeek: true, nights: nights.length };
+    const sum = (k) => nights.reduce((x, n) => x + (n[k] || 0), 0), mean = (k) => sum(k) / nights.length;
+    const wavg = (k, w) => { const tw = sum(w); return tw ? nights.reduce((x, n) => x + (n[k] || 0) * (n[w] || 0), 0) / tw : 0; };
+    const dict = (k) => { const o = {}; nights.forEach((n) => Object.entries(n[k] || {}).forEach(([a, v]) => { o[a] = (o[a] || 0) + v; })); return o; };
+    ['revenue', 'foodRev', 'bevRev', 'discounts', 'cogs', 'waste', 'delight', 'ownerSave', 'laborTotal', 'occTotal', 'card', 'profit', 'covers', 'parties', 'demand', 'walkouts', 'turnedAway', 'tips', 'lateTickets', 'tickets', 'joins', 'walkEmpty', 'idleSmallMin', 'reviews', 'smallParties', 'cookWait', 'preJoined'].forEach((k) => { W[k] = sum(k); });
+    ['labor', 'occupancy', 'demos', 'stationWait', 'stationBusy', 'joinBy'].forEach((k) => { W[k] = dict(k); });
+    ['seatWait', 'greetWait', 'mainTicket', 'serverUtil', 'busserUtil', 'seatFill', 'turns'].forEach((k) => { W[k] = mean(k); });
+    W.sat = wavg('sat', 'parties'); W.satAll = wavg('satAll', 'parties'); W.reviewStars = wavg('reviewStars', 'reviews');
+    W.gripes = {}; W.praise = {};
+    Object.keys(last.gripes).forEach((k) => { W.gripes[k] = nights.reduce((x, n) => x + n.gripes[k], 0) / nights.length; });
+    Object.keys(last.praise).forEach((k) => { W.praise[k] = nights.reduce((x, n) => x + n.praise[k], 0) / nights.length; });
+    W.items = {};
+    nights.forEach((n) => Object.entries(n.items).forEach(([id, s]) => { const t = W.items[id] = W.items[id] || { qty: 0, rev: 0, cost: 0, free: 0, pos: 0, neg: 0, photos: 0 }; Object.keys(t).forEach((k) => { t[k] += s[k] || 0; }); }));
+    const dl = {};
+    nights.forEach((n) => n.delighters.forEach((d) => { const t = dl[d.id] = dl[d.id] || { id: d.id, name: d.name, cost: 0, givesUp: 0, mentions: 0, moodSum: 0, n: 0 }; t.cost += d.cost; t.givesUp += d.givesUp; t.mentions += d.mentions; t.moodSum += d.mood; t.n++; }));
+    W.delighters = Object.values(dl).map((d) => Object.assign(d, { mood: d.moodSum / d.n }));
+    W.hh = { type: last.hh.type, label: last.hh.label };
+    ['parties', 'covers', 'rev', 'cogs', 'discount', 'leak', 'stayed', 'overstay', 'net'].forEach((k) => { W.hh[k] = nights.reduce((x, n) => x + (n.hh[k] || 0), 0); });
+    if (!nights.some((n) => n.hh.type !== 'none')) W.hh.type = 'none';
+    W.avgCheck = W.covers ? W.revenue / W.covers : 0; W.margin = W.revenue ? W.profit / W.revenue : 0;
+    W.primeCost = W.revenue ? (W.cogs + W.waste + W.laborTotal) / W.revenue : 0; W.laborPct = W.revenue ? W.laborTotal / W.revenue : 0; W.foodCostPct = W.revenue ? (W.cogs + W.waste) / W.revenue : 0;
+    ['day', 'dow', 'ingredients', 'stationCap', 'drop', 'snap', 'seats', 'reputationNext', 'starsNext'].forEach((k) => { W[k] = last[k]; });
+    W.dayName = 'The week'; W.stars = nights[0].stars;
+    return W;
   };
 
   /* What a delighter is worth: mood lifts the rating, the rating lifts traffic. Nothing if the rating has no room left. */

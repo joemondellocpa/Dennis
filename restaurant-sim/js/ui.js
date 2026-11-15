@@ -7,7 +7,7 @@
   const set = (o, path, v) => { const ks = path.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
 
   let game = RS.newGame();
-  let screen = 'builder', step = 0, sim = null, layout = null, speed = 'normal', paused = false, selTable = null, selStaff = null, tab = 'tables', lastResults = null, lastAdvice = null;
+  let screen = 'builder', step = 0, sim = null, layout = null, speed = 'normal', paused = false, selTable = null, selStaff = null, tab = 'tables', lastResults = null, lastAdvice = null, reviewView = 'night', shownNotes = [];
   const cfg = () => game.cfg;
   RS._debug = () => ({ game, sim, lastResults });
 
@@ -259,6 +259,8 @@
   const endNight = () => {
     const r = sim.results(); lastResults = r;
     lastAdvice = RS.advise(game, r);
+    game.weekNotes.push({ day: r.day, dow: r.dow, notes: lastAdvice.all }); if (game.weekNotes.length > 14) game.weekNotes.shift();
+    reviewView = speed === 'week' ? 'week' : 'night';
     const weekEnd = game.day % 7 === 6;
     RS.closeNight(game, r); topBar();
     if (speed === 'week' && !weekEnd) { sim = RS.createSim(game); layout = { tables: sim.tables, geom: sim.geom, missing: 0 }; selTable = null; selStaff = null; return; }
@@ -311,7 +313,7 @@
   const delightHTML = (r) => {
     if (!r.delighters.length) return '';
     const wk = week();
-    return '<div class="panel"><h3>Are the delighters working?</h3><table class="mini wide"><tr class="hd"><td></td><td class="num">Cost tonight</td><td class="num">Mood added</td><td class="num">Review mentions, ' + wk.length + (wk.length === 1 ? ' night' : ' nights') + '</td><td></td></tr>' +
+    return '<div class="panel"><h3>Are the delighters working?</h3><table class="mini wide"><tr class="hd"><td></td><td class="num">' + (r.isWeek ? 'Cost this week' : 'Cost tonight') + '</td><td class="num">Mood added</td><td class="num">Review mentions, ' + wk.length + (wk.length === 1 ? ' night' : ' nights') + '</td><td></td></tr>' +
       r.delighters.map((d) => { const worth = RS.delightWorth(game, r, d), cost = d.cost + d.givesUp, m = wk.reduce((x, n) => x + ((n.delighters.find((y) => y.id === d.id) || {}).mentions || 0), 0);
         const v = worth >= cost * 1.3 ? ['q-star', 'Earning its keep'] : (worth < cost * 0.6 ? ['q-dog', 'Not moving the needle'] : ['q-workhorse', 'About break-even']);
         return '<tr><td>' + d.name + (d.givesUp ? '<br><small class="muted">includes ' + RS.money(d.givesUp) + ' of drink sales it replaces</small>' : '') + '</td><td class="num">' + RS.money(cost) + '</td><td class="num">+' + d.mood.toFixed(1) + '</td><td class="num">' + m + '</td><td><span class="chip ' + v[0] + '">' + v[1] + '</span></td></tr>'; }).join('') +
@@ -320,25 +322,62 @@
   const happyHTML = (r) => {
     const h = r.hh; if (!h || h.type === 'none') return '';
     const wk = week().filter((n) => n.hh && n.hh.type !== 'none'), wnet = wk.reduce((x, n) => x + n.hh.net, 0);
-    return '<div class="panel"><h3>Happy hour</h3><p class="muted">' + h.label + '</p><dl class="kv"><dt>Guests it brought in</dt><dd>' + h.covers + '</dd><dt>Their sales</dt><dd>' + RS.money(h.rev) + '</dd><dt>Cost of what they were served</dt><dd>' + RS.money(-h.cogs) + '</dd><dt>Discount given to diners coming anyway</dt><dd class="bad">' + RS.money(-h.leak) + '</dd><dt>Stayed on for dinner</dt><dd>' + h.stayed + ' guests</dd><dt>Still at a table after 6:45</dt><dd>' + Math.round(h.overstay / 60 * 10) / 10 + ' seat-hours</dd><dt><b>Net effect on profit tonight</b></dt><dd><b class="' + (h.net >= 0 ? 'good' : 'bad') + '">' + RS.money(h.net) + '</b></dd>' +
+    return '<div class="panel"><h3>Happy hour</h3><p class="muted">' + h.label + '</p><dl class="kv"><dt>Guests it brought in</dt><dd>' + h.covers + '</dd><dt>Their sales</dt><dd>' + RS.money(h.rev) + '</dd><dt>Cost of what they were served</dt><dd>' + RS.money(-h.cogs) + '</dd><dt>Discount given to diners coming anyway</dt><dd class="bad">' + RS.money(-h.leak) + '</dd><dt>Stayed on for dinner</dt><dd>' + h.stayed + ' guests</dd><dt>Still at a table after 6:45</dt><dd>' + Math.round(h.overstay / 60 * 10) / 10 + ' seat-hours</dd><dt><b>Net effect on profit ' + (r.isWeek ? 'this week' : 'tonight') + '</b></dt><dd><b class="' + (h.net >= 0 ? 'good' : 'bad') + '">' + RS.money(h.net) + '</b></dd>' +
       (wk.length > 1 ? '<dt>Net over ' + wk.length + ' nights</dt><dd class="' + (wnet >= 0 ? 'good' : 'bad') + '">' + RS.money(wnet) + '</dd>' : '') + '</dl><p class="hint">Staff are already on the clock at five, so no extra wages are counted. The real costs are what gets poured and the discount handed to people who would have paid full price.</p></div>';
   };
+  /* ----- the week as a whole ----- */
+  const weekNights = () => { const start = Math.floor((game.day - 1) / 7) * 7; return game.history.filter((h) => h.day >= start); };
+  const weekAdvice = (nights, W) => {
+    const start = nights[0].day, groups = {};
+    game.weekNotes.filter((w) => w.day >= start).forEach((w) => w.notes.forEach((n) => {
+      const key = n.tag + '|' + n.title.replace(/\d[\d,.]*/g, '#').replace(/Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday/g, 'DAY');
+      const g = groups[key] = groups[key] || { days: [], total: 0 }; g.days.push(w.dow); g.total += n.value; g.note = n; g.last = w.dow;
+    }));
+    if (RS.stars(game.reputation) >= nights[0].stars) Object.keys(groups).forEach((k) => { if (/rating is slipping/.test(k)) delete groups[k]; });   // a couple of bad nights inside a week that ended higher
+    const all = Object.values(groups).sort((x, y) => y.total - x.total).map((g) => Object.assign({}, g.note, { weekTotal: g.total,
+      seen: (g.days.length === nights.length ? 'Every night this week.' : (g.days.length === 1 ? 'Once this week, on ' + RS.DAYS[g.days[0]] + '.' : 'On ' + g.days.length + ' of ' + nights.length + ' nights: ' + g.days.map((d) => RS.DAYS[d].slice(0, 3)).join(', ') + '.')) + (g.days.length > 1 ? ' The detail below is from ' + RS.DAYS[g.last] + '.' : '') }));
+    // Headlines that quote a number get the week's number, not the last night's.
+    all.forEach((x) => {
+      if (/^Labor ate/.test(x.title)) x.title = 'Labor ate ' + RS.pct(W.laborPct) + ' of sales this week';
+      else if (/walked out of the queue/.test(x.title)) x.title = W.walkouts + ' guests walked out of the queue this week';
+      else if (/left while tables sat empty/.test(x.title)) x.title = W.walkEmpty + ' guests left while tables sat empty this week';
+      else if (/^Deals gave away/.test(x.title)) x.title = 'Deals gave away ' + RS.money(W.discounts) + ' this week';
+      else if (/^Staff pushed tables together/.test(x.title)) x.title = 'Staff pushed tables together ' + W.joins + ' times this week';
+    });
+    const n = cfg().owner.detail < 35 ? 3 : (cfg().owner.detail < 70 ? 6 : 99);
+    const rows = RS.advise(game, W).rows, food = rows.filter((x) => x.it.course !== 'drink').sort((x, y) => y.cm * y.qty - x.cm * x.qty);
+    const byProfit = nights.slice().sort((x, y) => y.profit - x.profit), best = byProfit[0], worst = byProfit[byProfit.length - 1], good = [];
+    good.push(best.dayName + ' was the best night: ' + RS.money(best.profit) + ' on ' + RS.money(best.revenue) + ' of sales.' + (worst.profit < 0 ? ' ' + worst.dayName + ' was the worst, losing ' + RS.money(-worst.profit) + '.' : ''));
+    const losing = nights.filter((x) => x.profit < 0);
+    if (losing.length && losing.length < nights.length) good.push(nights.length - losing.length + ' nights made money and ' + losing.length + ' lost it (' + losing.map((x) => x.dayName.slice(0, 3)).join(', ') + '). The profitable nights earned ' + RS.money(nights.filter((x) => x.profit >= 0).reduce((s, x) => s + x.profit, 0)) + '; the others gave back ' + RS.money(-losing.reduce((s, x) => s + x.profit, 0)) + '.');
+    if (food[0]) good.push(food[0].it.name + ' was the dish of the week: ' + food[0].qty + ' sold, ' + RS.money(food[0].cm * food[0].qty) + ' toward rent and wages.');
+    const d = RS.stars(game.reputation) - nights[0].stars;
+    good.push('Public rating ' + (Math.abs(d) < 0.05 ? 'held at ' : (d > 0 ? 'rose from ' : 'fell from ') + nights[0].stars.toFixed(1) + ' to ') + RS.stars(game.reputation).toFixed(1) + ' over the week.');
+    return { notes: all.slice(0, n), hidden: Math.max(0, all.length - n), good, rows };
+  };
+  const nightsHTML = (nights) => {
+    const top = Math.max.apply(null, nights.map((n) => n.profit)), low = Math.min.apply(null, nights.map((n) => n.profit));
+    return '<div class="panel"><h3>Night by night</h3><div class="tablewrap"><table class="menu"><thead><tr><th>Night</th><th class="num">Came to the door</th><th class="num">Fed</th><th class="num">Left hungry</th><th class="num">Sales</th><th class="num">Profit</th><th class="num">Margin</th><th class="num">Mood</th><th class="num">Late tickets</th><th class="num">Tables joined</th><th class="num">Rating after</th></tr></thead><tbody>' +
+      nights.map((n) => '<tr><td><b>' + n.dayName + '</b>' + (n.profit === top ? ' <span class="chip q-star">best</span>' : (n.profit === low && nights.length > 2 ? ' <span class="chip q-dog">worst</span>' : '')) + '</td><td class="num">' + n.demand + '</td><td class="num">' + n.covers + '</td><td class="num ' + (n.walkouts + n.turnedAway ? 'bad' : '') + '">' + (n.walkouts + n.turnedAway) + '</td><td class="num">' + RS.money(n.revenue) + '</td><td class="num ' + (n.profit >= 0 ? 'good' : 'bad') + '">' + RS.money(n.profit) + '</td><td class="num">' + RS.pct(n.margin) + '</td><td class="num">' + n.sat.toFixed(0) + '</td><td class="num">' + n.lateTickets + ' of ' + n.tickets + '</td><td class="num">' + n.joins + '</td><td class="num">' + n.starsNext.toFixed(1) + '</td></tr>').join('') + '</tbody></table></div></div>';
+  };
   const renderReview = () => {
-    const r = lastResults, a = lastAdvice, full = cfg().owner.detail >= 35;
+    const nights = weekNights(), wkView = reviewView === 'week' && nights.length > 1;
+    const r = wkView ? RS.weekResults(nights) : lastResults, a = wkView ? weekAdvice(nights, r) : lastAdvice, full = cfg().owner.detail >= 35;
+    shownNotes = a.notes;
     const line = (label, v, cls, pctOf) => '<tr class="' + (cls || '') + '"><td>' + label + '</td><td class="num">' + RS.money(v) + '</td><td class="num muted">' + (pctOf ? RS.pct((/tot/.test(cls || '') ? v : Math.abs(v)) / pctOf) : '') + '</td></tr>';
     const sub = (obj) => (cfg().owner.detail >= 60 ? Object.entries(obj).filter((e) => e[1] > 0).map((e) => line('&nbsp;&nbsp;&nbsp;' + e[0], -e[1], 'subl', r.revenue)).join('') : '');
-    const week = game.history.slice(-7), isWeek = game.day % 7 === 0 && week.length === 7;
+    const week = game.history.slice(-7), isWeek = !wkView && game.day % 7 === 0 && week.length === 7;
     const wk = isWeek ? { rev: week.reduce((x, y) => x + y.revenue, 0), pr: week.reduce((x, y) => x + y.profit, 0), cov: week.reduce((x, y) => x + y.covers, 0) } : null;
     const rows = RS.quadrants(a.rows.filter((x) => x.it.course !== 'drink')).sort((x, y) => y.cm * y.qty - x.cm * x.qty);
-    $('#app').innerHTML = '<div class="review"><header><div><h2>' + r.dayName + ' night, in the books</h2><p class="lede">Night ' + (r.day + 1) + ' at ' + esc(cfg().name) + '. ' + r.demand + ' guests came to the door, ' + r.covers + ' were fed' + (r.walkouts + r.turnedAway ? ', ' + (r.walkouts + r.turnedAway) + ' left hungry' : '') + '.</p></div>' +
-      '<div class="navrow"><button class="ghost" data-act="tweak">Adjust before next service</button><button class="primary" data-act="next">Run ' + RS.DAYS[game.day % 7] + '</button><button class="ghost" data-act="week">Run the week fast</button></div></header>' + goalHTML() + worksHTML() +
+    $('#app').innerHTML = '<div class="review"><header><div><h2>' + (wkView ? 'The week, in the books' : r.dayName + ' night, in the books') + '</h2><p class="lede">' + (wkView ? nights.length + ' nights, ' + nights[0].dayName + ' to ' + nights[nights.length - 1].dayName + ',' : 'Night ' + (r.day + 1)) + ' at ' + esc(cfg().name) + '. ' + r.demand + ' guests came to the door, ' + r.covers + ' were fed' + (r.walkouts + r.turnedAway ? ', ' + (r.walkouts + r.turnedAway) + ' left hungry' : '') + '.</p></div>' +
+      '<div class="navrow"><button class="ghost" data-act="tweak">Adjust before next service</button><button class="primary" data-act="next">Run ' + RS.DAYS[game.day % 7] + '</button><button class="ghost" data-act="week">Run the week fast</button></div></header>' + (nights.length > 1 ? '<div class="tabs view"><button data-act="rview" data-v="night" class="' + (wkView ? '' : 'on') + '">' + lastResults.dayName + ' night</button><button data-act="rview" data-v="week" class="' + (wkView ? 'on' : '') + '">The whole week so far (' + nights.length + ' nights)</button></div>' : '') + goalHTML() + worksHTML() + (wkView ? nightsHTML(nights) : '') +
       (wk ? '<div class="goal"><b>The week</b><span>' + RS.money(wk.rev) + ' in sales, ' + RS.money(wk.pr) + ' profit (' + RS.pct(wk.rev ? wk.pr / wk.rev : 0) + '), ' + wk.cov + ' guests.</span></div>' : '') +
       '<div class="kpis big"><div><small>Sales</small><b>' + RS.money(r.revenue) + '</b></div><div><small>Profit</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.money(r.profit) + '</b></div><div><small>Margin</small><b class="' + (r.profit >= 0 ? 'good' : 'bad') + '">' + RS.pct(r.margin) + '</b></div>' +
       '<div><small>Guests</small><b>' + r.covers + '</b></div><div><small>Check per guest</small><b>' + RS.money(r.avgCheck) + '</b></div><div><small>Guest mood</small><b>' + r.sat.toFixed(0) + '</b></div><div><small>Table turns</small><b>' + r.turns.toFixed(1) + '</b></div><div><small>Public rating</small><b class="' + (game.reputation >= game.reputationPrev ? 'good' : 'bad') + '">' + (game.reputation >= game.reputationPrev ? '&#9650; ' : '&#9660; ') + RS.stars(game.reputation).toFixed(1) + ' &#9733;</b></div></div>' +
-      '<div class="cols"><div><div class="panel"><h3>What to change</h3>' + (a.notes.length ? a.notes.map((n, i) => '<div class="note"><span class="tag">' + n.tag + '</span><b>' + esc(n.title) + '</b>' + (n.value > 15 ? '<em class="val">about ' + RS.money(n.value) + ' a night</em>' : '') + '<p>' + esc(n.body) + '</p>' + (n.detail ? '<div class="tablewrap detail">' + n.detail + '</div>' : '') + n.actions.map((ac, j) => '<button class="ghost apply" data-act="apply" data-i="' + i + '" data-j="' + j + '">' + esc(ac.label) + '</button>').join('') + '</div>').join('') : '<p class="muted">Nothing urgent. A clean night.</p>') +
+      '<div class="cols"><div><div class="panel"><h3>' + (wkView ? 'What to change, looking at the whole week' : 'What to change') + '</h3>' + (a.notes.length ? a.notes.map((n, i) => '<div class="note"><span class="tag">' + n.tag + '</span><b>' + esc(n.title) + '</b>' + (n.weekTotal != null ? (n.weekTotal > 30 ? '<em class="val">about ' + RS.money(n.weekTotal) + ' over the week</em>' : '') : (n.value > 15 ? '<em class="val">about ' + RS.money(n.value) + ' a night</em>' : '')) + (n.seen ? '<p class="seen">' + esc(n.seen) + '</p>' : '') + '<p>' + esc(n.body) + '</p>' + (n.detail ? '<div class="tablewrap detail">' + n.detail + '</div>' : '') + n.actions.map((ac, j) => '<button class="ghost apply" data-act="apply" data-i="' + i + '" data-j="' + j + '">' + esc(ac.label) + '</button>').join('') + '</div>').join('') : '<p class="muted">Nothing urgent. A clean night.</p>') +
       (a.hidden ? '<p class="muted">' + a.hidden + ' smaller notes held back. Raise "how much you want to see" under Experience to get them.</p>' : '') + '</div>' +
-      reviewsHTML(r) + buzzHTML(r) + delightHTML(r) + happyHTML(r) + (a.good.length ? '<div class="panel"><h3>What worked</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
-      '<div><div class="panel"><h3>Tonight\'s books</h3><table class="pl">' + line('Food', r.foodRev) + line('Drinks', r.bevRev) + line('Sales', r.revenue, 'tot') +
+      reviewsHTML(r) + buzzHTML(r) + delightHTML(r) + happyHTML(r) + (a.good.length ? '<div class="panel"><h3>' + (wkView ? 'The week in a few lines' : 'What worked') + '</h3><ul class="good-list">' + a.good.map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul></div>' : '') + chartHTML() + '</div>' +
+      '<div><div class="panel"><h3>' + (wkView ? 'The week\'s books' : 'Tonight\'s books') + '</h3><table class="pl">' + line('Food', r.foodRev) + line('Drinks', r.bevRev) + line('Sales', r.revenue, 'tot') +
       line('Ingredients on the plate', -r.cogs, '', r.revenue) + line('Spoilage and overproduction', -r.waste, '', r.revenue) + (r.delight ? line('Delighters', -r.delight, '', r.revenue) + (cfg().owner.detail >= 60 ? r.delighters.map((d) => line('&nbsp;&nbsp;&nbsp;' + d.name, -d.cost, 'subl', r.revenue)).join('') : '') : '') +
       line('Labor', -r.laborTotal, '', r.revenue) + sub(r.labor) + line('Rent and overhead', -r.occTotal, '', r.revenue) + sub(r.occupancy) + line('Card fees', -r.card, '', r.revenue) + (r.ownerSave > 1 ? line('Saved by the owner\'s desk work', r.ownerSave, '', r.revenue) : '') + line('Profit', r.profit, 'tot ' + (r.profit >= 0 ? 'good' : 'bad'), r.revenue) + '</table>' +
       '<p class="hint">Prime cost (food plus labor) ' + RS.pct(r.primeCost) + '. Staff took home ' + RS.money(r.tips) + ' in tips.' + (r.discounts > 1 ? ' Deals and comps gave away ' + RS.money(r.discounts) + '.' : '') + '</p></div>' +
@@ -386,8 +425,9 @@
     else if (act === 'speed') { if (el.dataset.s === 'pause') paused = !paused; else { speed = el.dataset.s; paused = false; } updateSide(); }
     else if (act === 'next') startNight();
     else if (act === 'week') { speed = 'week'; startNight(); }
+    else if (act === 'rview') { reviewView = el.dataset.v; renderReview(); }
     else if (act === 'tweak') { screen = 'builder'; step = 4; renderBuilder(); window.scrollTo(0, 0); }
-    else if (act === 'apply') { const n = lastAdvice.notes[Number(el.dataset.i)], ac = n && n.actions[Number(el.dataset.j || 0)]; if (ac && !ac.applied) { ac.apply(c, game); ac.applied = true; el.textContent = 'Done: ' + ac.label; el.disabled = true; el.classList.add('applied'); const w = $('#works'); if (w) w.outerHTML = worksHTML(); } }
+    else if (act === 'apply') { const n = shownNotes[Number(el.dataset.i)], ac = n && n.actions[Number(el.dataset.j || 0)]; if (ac && !ac.applied) { ac.apply(c, game); ac.applied = true; el.textContent = 'Done: ' + ac.label; el.disabled = true; el.classList.add('applied'); const w = $('#works'); if (w) w.outerHTML = worksHTML(); } }
     else if (act === 'restart') { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; game = RS.newGame(); RS.applyPreset(game.cfg, 'italian'); game.cfg.name = 'Your Restaurant'; screen = 'builder'; step = 0; sim = null; renderBuilder(); } else { el.dataset.armed = '1'; el.textContent = 'Click again to wipe this restaurant'; setTimeout(() => { if (el.dataset.armed) { delete el.dataset.armed; el.textContent = 'Start over'; } }, 4000); } }
   });
 

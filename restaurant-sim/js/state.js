@@ -301,7 +301,7 @@ RS.suggestStaff = (cfg) => {
 };
 
 /* Goal + money carried across nights. */
-RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false, expect: null, projects: [], stationBonus: {}, capex: 0 });
+RS.newGame = () => ({ cfg: RS.defaultConfig(), day: 0, reputation: 0.5, cash: 0, debtLeft: 0, history: [], started: false, expect: null, projects: [], stationBonus: {}, capex: 0, weekNotes: [] });
 
 /* Building work on the line: money up front, two weeks of contractors, then more room on one station. */
 RS.STATION_COST = { grill: 22000, saute: 18000, fry: 14000, oven: 20000, cold: 9000, pastry: 10000, sushi: 16000 };
